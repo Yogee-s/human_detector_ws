@@ -1,0 +1,5 @@
+train: /home/yogee/Desktop/human_detector_ws/my_data/images/train
+val: /home/yogee/Desktop/human_detector_ws/my_data/images/val
+
+nc: 2
+names: ["person", "robot"]
