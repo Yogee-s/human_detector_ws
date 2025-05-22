@@ -10,4 +10,5 @@ training_data/labels/
 raw_data/converted_mp4_videos/
 raw_data/labelled_data/
 raw_data/ros_bags/
+training_data/runs
 
