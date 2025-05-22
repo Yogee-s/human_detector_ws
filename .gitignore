@@ -5,4 +5,9 @@ __pycache__/
 *.pyc
 .DS_Store
 src/human_detector/models/
+training_data/images/
+training_data/labels/
+raw_data/converted_mp4_videos/
+raw_data/labelled_data/
+raw_data/ros_bags/
 

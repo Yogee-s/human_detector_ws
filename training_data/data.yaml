@@ -1,5 +1,7 @@
-train: /home/yogee/Desktop/human_detector_ws/my_data/images/train
-val: /home/yogee/Desktop/human_detector_ws/my_data/images/val
-
+path: /home/yogee/Desktop/human_detector_ws/raw_data/../training_data
+train: images/train
+val: images/val
 nc: 2
-names: ["person", "robot"]
+names:
+- person
+- teleco
