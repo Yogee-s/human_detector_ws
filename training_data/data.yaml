@@ -1,7 +1,18 @@
-path: /home/yogee/Desktop/human_detector_ws/raw_data/../training_data
-train: images/train
-val: images/val
+# data.yaml
+
+train:
+  - /home/yogee/Desktop/human_detector_ws/training_data/data_person/train/images
+  - /home/yogee/Desktop/human_detector_ws/training_data/data_teleco/images/train
+
+val:
+  - /home/yogee/Desktop/human_detector_ws/training_data/data_person/test/images
+  - /home/yogee/Desktop/human_detector_ws/training_data/data_person/valid/images
+  - /home/yogee/Desktop/human_detector_ws/training_data/data_teleco/images/val
+
+# number of classes
 nc: 2
+
+# class names, in order
 names:
-- person
-- teleco
+  - person
+  - teleco

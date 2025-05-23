@@ -16,7 +16,7 @@ class Human2DDistance(Node):
 
         # --- load detection model ---
         share_dir     = get_package_share_directory('human_detector')
-        default_model = f'{share_dir}/models/best_120_epochs_with_augmentation.pt'  # your detection-only checkpoint
+        default_model = f'{share_dir}/models/best_30_epochs.pt'
         self.declare_parameter('model_path', default_model)
         model_path = self.get_parameter('model_path')\
                              .get_parameter_value().string_value
@@ -53,13 +53,11 @@ class Human2DDistance(Node):
         )
 
     def depth_cb(self, msg: Image):
-        # raw depth in millimeters
         self.depth_image = self.bridge.imgmsg_to_cv2(
             msg, desired_encoding='passthrough'
         )
 
     def info_cb(self, msg: CameraInfo):
-        # fill pyrealsense2 intrinsics
         intr = rs.intrinsics()
         intr.width  = msg.width
         intr.height = msg.height
@@ -72,30 +70,27 @@ class Human2DDistance(Node):
         self.depth_intrinsics = intr
 
     def image_cb(self, msg: Image):
-        # 1) convert color frame
         frame = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
-
-        # 2) run detection
         results = self.model(frame)[0]
-
-        # 3) copy for drawing
         annotated = frame.copy()
 
-        # 4) loop through detections
         for box in results.boxes:
             cls   = int(box.cls[0])
             label = self.model.names[cls]
-            if label != 'person':
+
+            # <<--- REMOVE this if you want **all** classes drawn:
+            # if label != 'person':
+            #     continue
+
+            # OR if you only want person+teleco:
+            if label not in ('person','teleco'):
                 continue
 
-            # get box coords
-            x1, y1, x2, y2 = box.xyxy[0].tolist()
-            x1, y1, x2, y2 = map(int, (x1, y1, x2, y2))
-
             # draw 2D box
+            x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
             cv2.rectangle(annotated, (x1, y1), (x2, y2), (0,255,0), 2)
 
-            # compute center pixel
+            # compute center pixel for distance
             u = (x1 + x2) // 2
             v = (y1 + y2) // 2
 
@@ -106,66 +101,32 @@ class Human2DDistance(Node):
                and 0 <= u < self.depth_image.shape[1]):
 
                 z_mm = float(self.depth_image[v, u])
-                z = z_mm * 0.001  # to meters
+                z = z_mm * 0.001  # meters
                 if z > 0:
-                    # deproject to 3D
                     X, Y, Z = rs.rs2_deproject_pixel_to_point(
                         self.depth_intrinsics, [u, v], z
                     )
-                    self.get_logger().info(
-                        f"[3D] Person at pixel ({u},{v}): "
-                        f"X={X:.2f}m  Y={Y:.2f}m  Z={Z:.2f}m"
-                    )
                     dist_text = f"{Z:.2f} m"
+                    self.get_logger().info(
+                        f"[3D] {label} at ({u},{v}): X={X:.2f}m Y={Y:.2f}m Z={Z:.2f}m"
+                    )
 
-            # --- neat background + text overlay ---
+            # draw background & label+distance
             dist_label = f"{label} {dist_text}"
-            font       = cv2.FONT_HERSHEY_SIMPLEX
-            scale      = 0.5
-            thk        = 1
-
-            # measure text size
-            (w_text, h_text), baseline = cv2.getTextSize(
-                dist_label, font, scale, thk
-            )
+            font, scale, thk = cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1
+            (w_text, h_text), baseline = cv2.getTextSize(dist_label, font, scale, thk)
             pad = 4
-
-            # background rectangle coords
-            x_bg1 = x1
-            y_bg1 = y1 - h_text - baseline - pad
-            x_bg2 = x1 + w_text + pad * 2
-            y_bg2 = y1
-
-            # if it would go off the top, draw below instead
+            x_bg1, y_bg1 = x1, y1 - h_text - baseline - pad
+            x_bg2, y_bg2 = x1 + w_text + pad*2, y1
             if y_bg1 < 0:
-                y_bg1 = y1
-                y_bg2 = y1 + h_text + baseline + pad
+                y_bg1, y_bg2 = y1, y1 + h_text + baseline + pad
+            cv2.rectangle(annotated, (x_bg1,y_bg1), (x_bg2,y_bg2), (0,0,0), cv2.FILLED)
+            cv2.putText(annotated, dist_label,
+                        (x_bg1+pad, y_bg2-baseline-pad//2),
+                        font, scale, (0,255,0), thk, cv2.LINE_AA)
 
-            # draw filled background (black)
-            cv2.rectangle(
-                annotated,
-                (x_bg1, y_bg1),
-                (x_bg2, y_bg2),
-                (0, 0, 0),
-                cv2.FILLED
-            )
-
-            # draw the text (green)
-            cv2.putText(
-                annotated,
-                dist_label,
-                (x_bg1 + pad, y_bg2 - baseline - pad // 2),
-                font,
-                scale,
-                (0, 255, 0),
-                thk,
-                cv2.LINE_AA
-            )
-
-        # 5) show & publish
         cv2.imshow('Detection', annotated)
         cv2.waitKey(1)
-
         out = self.bridge.cv2_to_imgmsg(annotated, 'bgr8')
         out.header = msg.header
         self.pub.publish(out)
