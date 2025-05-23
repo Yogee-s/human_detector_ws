@@ -4,7 +4,6 @@ log/
 __pycache__/
 *.pyc
 .DS_Store
-src/human_detector/models/
 data_training/images/
 data_training/labels/
 data_raw/converted_mp4_videos/
