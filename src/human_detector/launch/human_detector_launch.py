@@ -22,7 +22,7 @@ def generate_launch_description():
             name='human_detection',
             output='screen',
             parameters=[{
-                'model_path': '/home/yogee/Desktop/human_detector_ws/src/human_detector/models/best_50_epochs_newdata.pt',
+                'model_path': '/home/yogee/Desktop/human_detector_ws/src/human_detector/models/best.pt',
             }]
         ),
 

@@ -16,7 +16,7 @@ class Human2DDistance(Node):
 
         # --- load detection model ---
         share_dir     = get_package_share_directory('human_detector')
-        default_model = f'{share_dir}/models/best_50_epochs_newdata.pt'
+        default_model = f'{share_dir}/models/best.pt'
         self.declare_parameter('model_path', default_model)
         model_path = self.get_parameter('model_path')\
                              .get_parameter_value().string_value
