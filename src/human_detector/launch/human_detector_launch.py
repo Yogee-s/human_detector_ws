@@ -16,27 +16,27 @@ def generate_launch_description():
             }]
         ),
         # Human detection node
-        # Node(
-        #     package='human_detector',
-        #     executable='human_detection',
-        #     name='human_detection',
-        #     output='screen',
-        #     parameters=[{
-        #         'model_path': '/home/yogee/Desktop/human_detector_ws/src/human_detector/models/yolov11n.pt',
-        #     }]
-        # ),
-
-        # Human pose node
         Node(
             package='human_detector',
-            executable='human_pose',
-            name='human_pose',
+            executable='human_detection',
+            name='human_detection',
             output='screen',
             parameters=[{
-                # 'model_path': '/home/yogee/Desktop/human_detector_ws/src/human_detector/models/yolov8n-pose.pt',
-                'model_path': '/home/yogee/Desktop/human_detector_ws/src/human_detector/models/yolov11s-pose.pt',
+                'model_path': '/home/yogee/Desktop/human_detector_ws/src/human_detector/models/best_120_epochs_with_augmentation.pt',
             }]
         ),
+
+        # Human pose node
+        # Node(
+        #     package='human_detector',
+        #     executable='human_pose',
+        #     name='human_pose',
+        #     output='screen',
+        #     parameters=[{
+        #         # 'model_path': '/home/yogee/Desktop/human_detector_ws/src/human_detector/models/yolov8n-pose.pt',
+        #         'model_path': '/home/yogee/Desktop/human_detector_ws/src/human_detector/models/yolov11s-pose.pt',
+        #     }]
+        # ),
  
     ])
 

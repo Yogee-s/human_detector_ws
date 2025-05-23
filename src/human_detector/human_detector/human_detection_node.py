@@ -16,7 +16,7 @@ class Human2DDistance(Node):
 
         # --- load detection model ---
         share_dir     = get_package_share_directory('human_detector')
-        default_model = f'{share_dir}/models/yolov11n.pt'  # your detection-only checkpoint
+        default_model = f'{share_dir}/models/best_120_epochs_with_augmentation.pt'  # your detection-only checkpoint
         self.declare_parameter('model_path', default_model)
         model_path = self.get_parameter('model_path')\
                              .get_parameter_value().string_value
