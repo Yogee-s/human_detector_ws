@@ -22,7 +22,7 @@ def generate_launch_description():
             name='human_detection',
             output='screen',
             parameters=[{
-                'model_path': '/home/yogee/Desktop/human_detector_ws/src/human_detector/models/best_30_epochs.pt',
+                'model_path': '/home/yogee/Desktop/human_detector_ws/src/human_detector/models/best_50_epochs_newdata.pt',
             }]
         ),
 
@@ -36,6 +36,16 @@ def generate_launch_description():
         #         # 'model_path': '/home/yogee/Desktop/human_detector_ws/src/human_detector/models/yolov8n-pose.pt',
         #         'model_path': '/home/yogee/Desktop/human_detector_ws/src/human_detector/models/yolov11s-pose.pt',
         #     }]
+        # ),
+
+
+        # RViz2 visualizer
+        # Node(
+        #     package='rviz2',
+        #     executable='rviz2',
+        #     name='rviz2',
+        #     arguments=['-d', 'human_detection.rviz'],
+        #     output='screen'
         # ),
  
     ])

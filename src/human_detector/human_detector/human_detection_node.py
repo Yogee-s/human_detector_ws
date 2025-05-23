@@ -16,7 +16,7 @@ class Human2DDistance(Node):
 
         # --- load detection model ---
         share_dir     = get_package_share_directory('human_detector')
-        default_model = f'{share_dir}/models/best_30_epochs.pt'
+        default_model = f'{share_dir}/models/best_50_epochs_newdata.pt'
         self.declare_parameter('model_path', default_model)
         model_path = self.get_parameter('model_path')\
                              .get_parameter_value().string_value
@@ -26,6 +26,7 @@ class Human2DDistance(Node):
         # --- OpenCV bridge & window ---
         self.bridge = CvBridge()
         cv2.namedWindow('Detection', cv2.WINDOW_NORMAL)
+        cv2.resizeWindow('Detection', 1280, 720)  # or any desired resolution
 
         # --- depth containers ---
         self.depth_image = None
@@ -71,7 +72,16 @@ class Human2DDistance(Node):
 
     def image_cb(self, msg: Image):
         frame = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
-        results = self.model(frame)[0]
+        
+        # Run YOLO inference with confidence and IoU thresholds:
+        #   - conf: minimum confidence score required to keep a detection (0.0–1.0)
+        #           higher = fewer false positives, lower = more detections (but noisier)
+        #   - iou:  intersection-over-union threshold for non-max suppression (0.0–1.0)
+        #           lower = removes more overlapping boxes, higher = keeps more overlaps
+        #   - [0]:  selects the first (and only) result in the batch
+        # results = self.model(frame)[0]
+        results = self.model(frame, conf=0.6, iou=0.5)[0]
+
         annotated = frame.copy()
 
         for box in results.boxes:

@@ -13,4 +13,5 @@ raw_data/ros_bags/
 training_data/runs
 training_data/data_person/
 training_data/data_teleco/
+training_data/results/
 
