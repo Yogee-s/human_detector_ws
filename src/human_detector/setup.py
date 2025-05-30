@@ -26,6 +26,7 @@ setup(
         'console_scripts': [
             'human_pose = human_detector.human_pose_node:main',
             'human_detection = human_detector.human_detection_node:main',
+            'human_detection_rviz = human_detector.human_detector_rviz:main'
         ],
     },
 )

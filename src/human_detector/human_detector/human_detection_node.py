@@ -16,8 +16,10 @@ class Human2DDistance(Node):
 
         # --- load detection model ---
         share_dir     = get_package_share_directory('human_detector')
-        default_model = f'{share_dir}/models/best_v2_yolov11n.pt'
-        self.declare_parameter('model_path', default_model)
+        # default_model = f'{share_dir}/models/best.pt'
+        # self.declare_parameter('model_path', default_model)
+
+        self.declare_parameter('model_path') # Expect this to be set in the launch file
         model_path = self.get_parameter('model_path')\
                              .get_parameter_value().string_value
         self.get_logger().info(f'Loading YOLO detection model from: {model_path}')
@@ -80,7 +82,8 @@ class Human2DDistance(Node):
         #           lower = removes more overlapping boxes, higher = keeps more overlaps
         #   - [0]:  selects the first (and only) result in the batch
         # results = self.model(frame)[0]
-        results = self.model(frame, conf=0.6, iou=0.5)[0]
+        results = self.model(frame, conf=0.6, iou=0.7)[0]
+
 
         annotated = frame.copy()
 

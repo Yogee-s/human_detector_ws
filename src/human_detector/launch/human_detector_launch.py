@@ -1,6 +1,11 @@
 from launch import LaunchDescription
 from launch_ros.actions import Node
 
+from launch_ros.actions import Node
+from ament_index_python.packages import get_package_share_directory
+import os
+
+
 def generate_launch_description():
     return LaunchDescription([
         # RealSense driver: leave out serial_no to auto-select the first camera
@@ -13,18 +18,25 @@ def generate_launch_description():
                 # no serial_no → will use the first available device
                 'depth_module.profile': '640x480x30',
                 'color_module.profile': '640x480x30',
+                'pointcloud.enable': True,
+                'align_depth.enable': True,
+                'unite_imu_method': 'none',
+                'publish_odom_tf': False,
+                'allow_no_texture_points': True,
+                'clip_distance': 3.0,
             }]
         ),
+
         # Human detection node
-        Node(
-            package='human_detector',
-            executable='human_detection',
-            name='human_detection',
-            output='screen',
-            parameters=[{
-                'model_path': '/home/yogee/Desktop/human_detector_ws/src/human_detector/models/best_v2_yolov11n.pt',
-            }]
-        ),
+        # Node(
+        #     package='human_detector',
+        #     executable='human_detection',
+        #     name='human_detection',
+        #     output='screen',
+        #     parameters=[{
+        #         'model_path': '/home/yogee/Desktop/human_detector_ws/src/human_detector/models/best.pt',
+        #     }]
+        # ),
 
         # Human pose node
         # Node(
@@ -38,15 +50,32 @@ def generate_launch_description():
         #     }]
         # ),
 
+        # Human detection node with RViz visualization
+        Node(
+            package='human_detector',
+            executable='human_detection_rviz',
+            name='human_detection_rviz',
+            output='screen',
+            parameters=[{
+                'model_path': '/home/yogee/Desktop/human_detector_ws/src/human_detector/models/best.pt',
+            }]
+        ),
 
-        # RViz2 visualizer
         # Node(
-        #     package='rviz2',
-        #     executable='rviz2',
-        #     name='rviz2',
-        #     arguments=['-d', 'human_detection.rviz'],
+        #     package='rqt_image_view',
+        #     executable='rqt_image_view',
+        #     name='rqt_image_view',
         #     output='screen'
         # ),
+
+        # RViz2 visualizer
+        Node(
+            package='rviz2',
+            executable='rviz2',
+            name='rviz2',
+            arguments=['-d', '/home/yogee/Desktop/human_detector_ws/src/human_detector/launch/human_detection.rviz'],
+            output='screen'
+        ),
  
     ])
 
