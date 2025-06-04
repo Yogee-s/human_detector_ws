@@ -12,36 +12,46 @@ import cv2
 
 class App:
     def __init__(self):
-        # ——— 1) build the TK window first
+        # ——— TK window setup ———
         self.root = tk.Tk()
         self.root.title("Robot⇆Human Tracker")
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
-        # clean exit on Ctrl+C
+        # allow Ctrl+C to close
         signal.signal(signal.SIGINT, lambda s,f: self._cleanup_and_exit())
 
-        # now safe to make StringVars
+        # Variables & last IDs
         self.robot_var = tk.StringVar()
         self.human_var = tk.StringVar()
-        self.last_ids = []            # remember last ID list
+        self.last_ids = []            # for menu updates
 
-        # load YOLO
-        self.model = YOLO('/home/yogee/Desktop/human_detector_ws/src/human_detector/models/best_v2_yolov11n.pt')
+        # ** Tracking and smoothing storage **
+        self.tracks = {}              # track_id -> {'box':(x1,y1,x2,y2),'z':Z, 'smoothed':dict}
+        self.local_map = {}           # track_id -> local_id
+        self.free_ids = []            # reusable local IDs
+        self.next_local = 1
+        self.alpha = 0.7              # EMA smoothing factor
+
+        # Load YOLOv8 model
+        self.model = YOLO(
+            '/home/yogee/Desktop/human_detector_ws/src/human_detector/models/best_v2_yolov11n.pt'
+        )
 
         # RealSense init
         self.pipeline = rs.pipeline()
         cfg = rs.config()
-        cfg.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
-        cfg.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
+        cfg.enable_stream(rs.stream.color, 640,480, rs.format.bgr8,30)
+        cfg.enable_stream(rs.stream.depth, 640,480, rs.format.z16,30)
         profile = self.pipeline.start(cfg)
         self.align = rs.align(rs.stream.color)
         self.intr = profile.get_stream(rs.stream.depth).as_video_stream_profile().get_intrinsics()
 
-        # GUI layout
+        # GUI elements
         self.video_label = tk.Label(self.root)
         self.video_label.pack()
 
-        ctrl = tk.Frame(self.root); ctrl.pack(fill=tk.X, pady=5)
+        ctrl = tk.Frame(self.root)
+        ctrl.pack(fill=tk.X, pady=5)
         tk.Label(ctrl, text="Robot ID:").pack(side=tk.LEFT)
         self.robot_menu = ttk.OptionMenu(ctrl, self.robot_var, "")
         self.robot_menu.pack(side=tk.LEFT, padx=5)
@@ -52,7 +62,7 @@ class App:
         self.dist_label = tk.Label(self.root, text="Distance: N/A", font=("Arial",14))
         self.dist_label.pack(pady=5)
 
-        # start the loop
+        # Begin loop
         self.update_frame()
         self.root.mainloop()
 
@@ -61,55 +71,104 @@ class App:
         sys.exit(0)
 
     def update_frame(self):
-        # grab aligned frames
+        # Acquire aligned frames
         frames = self.pipeline.wait_for_frames()
         aligned = self.align.process(frames)
         color = aligned.get_color_frame()
         depth = aligned.get_depth_frame()
         img = np.asanyarray(color.get_data())
 
-        # detect per‐frame, assign IDs 1..n
-        dets = []
-        results = self.model(img)[0]
-        for idx, (*box, conf, cls) in enumerate(results.boxes.data.tolist(), start=1):
-            if conf < 0.3:               # lower threshold
-                continue
-            x1,y1,x2,y2 = map(int, box)
+        # YOLOv8 tracking
+        results = self.model.track(
+            img, conf=0.3, iou=0.6,
+            tracker='bytetrack.yaml', persist=True
+        )[0]
+
+        current = {}
+        current_ids = set()
+
+        # Process each detection
+        for box in results.boxes:
+            raw_id = box.id
+            if raw_id is None: continue
+            tid = int(raw_id[0])
+            current_ids.add(tid)
+
+            x1,y1,x2,y2 = map(int, box.xyxy[0].tolist())
             cx,cy = (x1+x2)//2, (y1+y2)//2
-            z = depth.get_distance(cx,cy)
-            if z==0:
-                continue
+            z = depth.get_distance(cx, cy)
+            if z == 0: continue
             X,Y,Z = rs.rs2_deproject_pixel_to_point(self.intr, [cx,cy], z)
-            dets.append({
-                'id':       idx,
-                'box':      (x1,y1,x2,y2),
-                'cls':      self.model.names[int(cls)],
-                'world':    (X,Y,Z)
-            })
 
-        # build fresh object dict
-        objects = {d['id']:d for d in dets}
-        ids = list(objects.keys())
+            # EMA smoothing of box coords and depth
+            if tid in self.tracks:
+                prev = self.tracks[tid]['smoothed']
+                x1 = int(self.alpha*x1 + (1-self.alpha)*prev['x1'])
+                y1 = int(self.alpha*y1 + (1-self.alpha)*prev['y1'])
+                x2 = int(self.alpha*x2 + (1-self.alpha)*prev['x2'])
+                y2 = int(self.alpha*y2 + (1-self.alpha)*prev['y2'])
+                Z  =     self.alpha*Z  + (1-self.alpha)*prev['z']
+            # store
+            self.tracks.setdefault(tid, {})
+            self.tracks[tid]['smoothed'] = {'x1':x1,'y1':y1,'x2':x2,'y2':y2,'z':Z}
+            current[tid] = {
+                'box': (x1,y1,x2,y2),
+                'world': (X,Y,Z)
+            }
 
-        # only rebuild menus if the set of IDs changed
+        # Clean up departed
+        departed = set(self.tracks.keys()) - current_ids
+        for tid in departed:
+            # free local ID
+            if tid in self.local_map:
+                self.free_ids.append(self.local_map[tid])
+                del self.local_map[tid]
+            del self.tracks[tid]
+        
+        # Assign local IDs
+        for tid in current_ids:
+            if tid not in self.local_map:
+                if self.free_ids:
+                    lid = self.free_ids.pop(0)
+                else:
+                    lid = self.next_local
+                    self.next_local += 1
+                self.local_map[tid] = lid
+
+        # Build objects dict with local_ids
+        objects = {}
+        for tid, data in current.items():
+            lid = self.local_map[tid]
+            objects[lid] = {
+                'box': data['box'],
+                'world': data['world']
+            }
+
+        ids = sorted(objects.keys())
+        # update menus if changed
         if ids != self.last_ids:
             self._update_menu(self.robot_menu, self.robot_var, ids)
             self._update_menu(self.human_menu, self.human_var, ids)
             self.last_ids = ids
 
-        # draw boxes + labels
-        for oid,obj in objects.items():
+        # Draw
+        for lid, obj in objects.items():
             x1,y1,x2,y2 = obj['box']
-            color = (0,255,0) if str(oid)==self.robot_var.get() else \
-                    (255,0,0) if str(oid)==self.human_var.get() else \
-                    (0,0,255)
-            cv2.rectangle(img, (x1,y1),(x2,y2), color, 2)
-            text = f"{obj['cls']}:{oid}"
-            ty = y1+20 if y1<10 else y1-10
-            cv2.putText(img, text, (x1,ty),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+            # color coding
+            if str(lid)==self.robot_var.get():
+                col = (255,128,0)  # sky-blue
+            elif str(lid)==self.human_var.get():
+                col = (0,128,255)  # orange
+            else:
+                col = (200,200,200)
+            cv2.rectangle(img, (x1,y1),(x2,y2), col, 2)
+            text = f"ID {lid}"
+            (tw,th),_ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6,2)
+            # filled bg
+            cv2.rectangle(img, (x1, y1-th-6), (x1+tw+6, y1), col, cv2.FILLED)
+            cv2.putText(img, text, (x1+3, y1-4), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,0), 2)
 
-        # compute 3D distance if both selected
+        # Compute and show distance
         rv, hv = self.robot_var.get(), self.human_var.get()
         if rv.isdigit() and hv.isdigit():
             ri, hi = int(rv), int(hv)
@@ -123,14 +182,14 @@ class App:
         else:
             self.dist_label.config(text="Distance: N/A")
 
-        # render to Tk
+        # render
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        im_pil  = Image.fromarray(img_rgb)
-        imgtk   = ImageTk.PhotoImage(image=im_pil)
+        im_pil = Image.fromarray(img_rgb)
+        imgtk = ImageTk.PhotoImage(image=im_pil)
         self.video_label.imgtk = imgtk
         self.video_label.config(image=imgtk)
 
-        # schedule next
+        # next
         self.root.after(30, self.update_frame)
 
     def _update_menu(self, menu_widget, var, choices):
