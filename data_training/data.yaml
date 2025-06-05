@@ -1,15 +1,20 @@
 # data.yaml
 
 train:
-  - /home/yogee/Desktop/human_detector_ws/data_training/data_person/train/images
-  - /home/yogee/Desktop/human_detector_ws/data_training/data_teleco/Video_1/images/train
-  - /home/yogee/Desktop/human_detector_ws/data_training/data_teleco/Video_2/images/train
+  - data_person/images/train
+  - data_teleco/Video_1/images/train
+  - data_teleco/Video_2/images/train
+  - data_teleco/robots_humans_side_2/images/train
+  - data_teleco/robots_vincent_front_simulated/images
+
 
 val:
-  - /home/yogee/Desktop/human_detector_ws/data_training/data_person/test/images
-  - /home/yogee/Desktop/human_detector_ws/data_training/data_person/valid/images
-  - /home/yogee/Desktop/human_detector_ws/data_training/data_teleco/Video_1/images/val
-  - /home/yogee/Desktop/human_detector_ws/data_training/data_teleco/Video_2/images/val
+  - data_person/images/val
+  - data_person/valid/images
+  - data_teleco/Video_1/images/val
+  - data_teleco/Video_2/images/val
+  - data_teleco/robots_humans_side_2/images/val
+  - data_teleco/robots_vincent_front_simulated/val
 
 # number of classes
 nc: 2
