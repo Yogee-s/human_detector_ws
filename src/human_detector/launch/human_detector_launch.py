@@ -57,7 +57,7 @@ def generate_launch_description():
             name='human_detection_rviz',
             output='screen',
             parameters=[{
-                'model_path': '/home/yogee/Desktop/human_detector_ws/src/human_detector/models/best.pt',
+                'model_path': '/home/commu/Desktop/human_detector_ws/src/human_detector/models/best_yolo11s.pt',
             }]
         ),
 
@@ -73,7 +73,7 @@ def generate_launch_description():
             package='rviz2',
             executable='rviz2',
             name='rviz2',
-            arguments=['-d', '/home/yogee/Desktop/human_detector_ws/src/human_detector/launch/human_detection.rviz'],
+            arguments=['-d', '/home/commu/Desktop/human_detector_ws/src/human_detector/launch/human_detection.rviz'],
             output='screen'
         ),
  

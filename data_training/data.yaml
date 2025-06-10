@@ -5,16 +5,15 @@ train:
   - data_teleco/Video_1/images/train
   - data_teleco/Video_2/images/train
   - data_teleco/robots_humans_side_2/images/train
-  - data_teleco/robots_vincent_front_simulated/images
+  - data_teleco/robots_vincent_front_simulated/images/train
 
 
 val:
   - data_person/images/val
-  - data_person/valid/images
   - data_teleco/Video_1/images/val
   - data_teleco/Video_2/images/val
   - data_teleco/robots_humans_side_2/images/val
-  - data_teleco/robots_vincent_front_simulated/val
+  - data_teleco/robots_vincent_front_simulated/images/val
 
 # number of classes
 nc: 2
