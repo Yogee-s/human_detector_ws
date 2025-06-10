@@ -34,7 +34,7 @@ class App:
 
         # Load YOLOv8 model
         self.model = YOLO(
-            '/home/commu/Desktop/human_detector_ws/src/human_detector/models/best_yolo11s.pt'
+            'models/best_yolo11s.pt'
         )
 
         # RealSense init

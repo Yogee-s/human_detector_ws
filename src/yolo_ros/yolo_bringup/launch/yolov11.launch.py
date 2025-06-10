@@ -80,7 +80,7 @@ def generate_launch_description():
 
         # Model / tracker / device
         "model_type":     LaunchConfiguration("model_type", default="YOLO"),
-        "model":          LaunchConfiguration("model",      default="/home/commu/Desktop/human_detector_ws/src/human_detector/models/best_yolo11s.pt"),
+        "model":          LaunchConfiguration("model",      default="/home/commu/Desktop/human_detector_ws/models/best_yolo11s.pt"),
         "tracker":        LaunchConfiguration("tracker",    default="bytetrack.yaml"),
         "device":         LaunchConfiguration("device",     default="cpu"),   # Change to "cuda:0" if GPU is available
         "enable":         LaunchConfiguration("enable",     default="True"),
@@ -147,7 +147,7 @@ def generate_launch_description():
         executable="rviz2",
         name="rviz2",
         output="screen",
-        arguments=["-d", '/home/commu/Desktop/yolo_ros/src/yolo_ros/yolo_bringup/launch/yolo_3d.rviz']
+        arguments=["-d", '/home/commu/Desktop/human_detector_ws/src/yolo_ros/yolo_bringup/launch/yolo_3d.rviz']
     )
 
     # ─── Final LaunchDescription ===========

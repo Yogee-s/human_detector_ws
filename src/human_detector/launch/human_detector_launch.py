@@ -34,7 +34,7 @@ def generate_launch_description():
         #     name='human_detection',
         #     output='screen',
         #     parameters=[{
-        #         'model_path': '/home/yogee/Desktop/human_detector_ws/src/human_detector/models/best.pt',
+        #         'model_path': '../../models/best.pt',
         #     }]
         # ),
 
@@ -45,8 +45,8 @@ def generate_launch_description():
         #     name='human_pose',
         #     output='screen',
         #     parameters=[{
-        #         # 'model_path': '/home/yogee/Desktop/human_detector_ws/src/human_detector/models/yolov8n-pose.pt',
-        #         'model_path': '/home/yogee/Desktop/human_detector_ws/src/human_detector/models/yolov11s-pose.pt',
+        #         # 'model_path': '../../models/yolov8n-pose.pt',
+        #         'model_path': '../../models/yolov11s-pose.pt',
         #     }]
         # ),
 
@@ -57,7 +57,7 @@ def generate_launch_description():
             name='human_detection_rviz',
             output='screen',
             parameters=[{
-                'model_path': '/home/commu/Desktop/human_detector_ws/src/human_detector/models/best_yolo11s.pt',
+                'model_path': '/home/commu/Desktop/human_detector_ws/models/best_yolo11s.pt',
             }]
         ),
 
