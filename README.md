@@ -1,177 +1,117 @@
-# Human + Teleco Robot Detection
+# Human & Teleco Robot Detection
 
-A ROS 2 + YOLOv8 pipeline for real‐time 2D detection of **persons** and a custom **Teleco robot**, with 3D distance estimation via Intel RealSense depth data.
+**Osaka University Frontier Programme: Social Robotics Group (Yoshikawa Lab)**
+---
+Real‐time 2D detection of **humans** and a custom **Teleco robot**, plus 3D distance/position estimation using an Intel RealSense camera.
 
 ---
 
-## 🚀 Features
+## 🔎 Project Overview
 
-- **2D Detection** of Person & Teleco robot
-- **3D Distance Estimation** at each bounding‐box center
-- **ROS 2 Node** publishes annotated images on `/human_detector/annotated`
-- **Custom Training** on combined COCO‐person + Teleco datasets
-- Jupyter notebooks for **data prep** & **model training**
+* **Context:** Developed at Osaka Univ. Frontier Programme (Yoshikawa Lab) for human/Teleco detection.
+* **Hardware:** Intel RealSense D435 for RGB + depth streams.
+* **Model:** Ultralytics YOLO (`yolo11n.pt`) custom‐trained on COCO‐person + Teleco datasets.
+* **ROS Integration:** Wraps detection into ROS 2 nodes; optionally publishes 3D point clouds.
 
 ---
 
 ## 📂 Repository Layout
 
-```
+```text
 HUMAN_DETECTOR_WS/
-├── data_raw/                   # raw exports: ros bags, videos, CVAT/Roboflow outputs
+├── data_raw/            # raw exports from RealSense & ROS bags
 │   ├── converted_mp4_videos/
-│   └── labelled_data/
-├── data_training/              # final train/val split for YOLO
-│   ├── data_person/            # COCO‐person subset (train/val)
-│   ├── data_teleco/            # Teleco robot images & labels
-│   ├── images/
-│   │   ├── train/
-│   │   └── val/
-│   ├── labels/
-│   │   ├── train/
-│   │   └── val/
-│   └── data.yaml               # combined config (nc:2, names:['person','teleco'])
-├── launch/
-│   └── human_detector_launch.py
-├── src/human_detector/
-│   ├── human_detection_node.py
-│   └── human_pose_node.py      # optional pose‐based variant
-├── models/
-│   └── best_*.pt               # your custom weights
-├── helper_scripts.ipynb        # data prep & splitting notebooks
-├── train.ipynb                 # example Ultralytics training notebook
-├── package.xml & setup.py      # ROS 2 package metadata
-└── README.md                   # ← this file
+│   └── labelled_data/   # CVAT/Roboflow annotations
+├── data_training/       # train/val splits & YAML config
+│   ├── data_person/     # COCO‑person subset
+│   ├── data_teleco/     # Teleco frames & labels
+│   └── data.yaml        # nc:2, names: ['person','teleco']
+├── detection_scripts/   # standalone Python demos
+│   ├── laptop_human_publisher.py
+│   └── simple_detector.py
+├── src/
+│   ├── human_detector/  # ROS 2 detection package
+│   ├── yolo_ros/        # upstream ROS wrapper (mgonzs13/
+└── README.md            # this file
 ```
 
 ---
 
-## ⚙️ Installation
+## ⚙️ Dependencies & Installation
 
-1. **Clone & build the ROS 2 workspace**
-
-   ```bash
-   git clone https://github.com/YOUR_ORG/human_detector_ws.git
-   cd human_detector_ws
-   colcon build --merge-install
-   source install/setup.bash
-   ```
-
-2. **Install Python deps** (for notebooks & scripts)
+1. **ROS 2 Humble** (source install)
+2. **Python 3.10+** with:
 
    ```bash
    pip install ultralytics opencv-python pyrealsense2 pyyaml
    ```
+3. **Build workspace**
+
+   ```bash
+   cd ~/Desktop/human_detector_ws
+   source /opt/ros/humble/setup.bash
+   colcon build --symlink-install
+   source install/setup.bash
+   ```
 
 ---
 
-## 📊 Data Preparation
+## 🛠 Data Processing & Annotation
 
-1. **Export** frames/video from ROS-bag → annotate in CVAT/Roboflow.
-2. **Run** `helper_scripts.ipynb` to:
-
-   - Collect Teleco & COCO-person exports
-   - Split into `train/val` under `data_training/`
-   - Generate `data_training/data.yaml`:
-
-     ```yaml
-     train: images/train
-     val: images/val
-     nc: 2
-     names:
-       - person
-       - teleco
-     ```
-
-3. **Verify** `data_training/images/{train,val}` and `labels/{train,val}` exist.
+1. **Record raw data** via RealSense / ROS‐bag.
+2. **Convert & extract frames** using `data_raw/download_human_data.py` or `helper_scripts.ipynb`.
+3. **Label** in CVAT (see [https://docs.cvat.ai/docs/administration/basics/installation/](https://docs.cvat.ai/docs/administration/basics/installation/)).
+4. **Prepare** `data_training/` splits and `data.yaml` with helper notebooks.
 
 ---
 
-## 🤖 Model Training
+## 🎓 Model Training
 
-### CLI
+### Headless (CLI)
 
 ```bash
-yolo train \
-  data=data_training/data.yaml \
-  model=yolov8n.pt \
-  epochs=120 \
-  imgsz=416 \
-  batch=16 \
-  project=runs/train \
-  name=human_teleco
+python3 train.py \
+  --data data_training/data.yaml \
+  --model yolov11n.pt \
+  --epochs 100 \
+  --imgsz 640 \
+  --batch 16
 ```
 
-### Jupyter
+### Interactive (Notebook)
 
-In **train.ipynb**:
-
-```python
-from ultralytics import YOLO
-
-model = YOLO('models/yolov8n.pt')  # base checkpoint
-results = model.train(
-    data='data_training/data.yaml',
-    epochs=120,
-    imgsz=416,
-    batch=16,
-    device=0
-)
-print("Best weights saved at:", results.best)
-```
+Open **train.ipynb** and follow cells to train & visualize metrics.
 
 ---
 
-## 🚨 Inference with ROS 2
+## 🚀 Inference & ROS 2 Usage
 
-Launch live detection + distance estimation:
+### 1) 2D Detection only
 
 ```bash
-source install/setup.bash
 ros2 launch human_detector human_detector_launch.py
 ```
 
-- **Input:**
+### 2) 2D + 3D Distance (with yolo\_ros)
 
-  - `/camera/realsense2_camera/color/image_raw`
-  - `/camera/realsense2_camera/depth/image_rect_raw`
+```bash
+ros2 launch yolo_bringup yolov11.launch.py use_3d:=True
+```
 
-- **Output:**
+### 3) Standalone Python demos
 
-  - `/human_detector/annotated` (`sensor_msgs/Image`)
-
-To swap models, edit the `model_path` parameter in `launch/human_detector_launch.py` to your `best_*.pt`.
-
----
-
-## 🖥 Viewing Results
-
-- An OpenCV window shows 2D boxes + distance labels.
-- Alternatively, view `/human_detector/annotated` in **RViz** or **rqt_image_view**.
+```bash
+python3 detection_scripts/simple_detector.py
+python3 detection_scripts/laptop_human_publisher.py
+```
 
 ---
 
-## 🛠 Customization
+## 🔗 Upstream & References
 
-- Use `human_detection_node.py` for pure detection (no keypoints).
-- Use `human_pose_node.py` if you want pose‐keypoints.
-- Adjust YOLO training parameters (augmentation, freeze layers, etc.) in `train.ipynb`.
-
----
-
-## 📚 Notebooks
-
-- **helper_scripts.ipynb** — frame extraction, dataset merge/split, `data.yaml` generation
-- **train.ipynb** — interactive training & metric plotting
-- **inference.ipynb** — test detection on images/video
+* **CVAT** for annotation: [https://docs.cvat.ai/docs/administration/basics/installation/](https://docs.cvat.ai/docs/administration/basics/installation/)
+* **YOLO‐ROS** wrapper: [https://github.com/mgonzs13/yolo\_ros](https://github.com/mgonzs13/yolo_ros)
+* **COCO** open-source person dataset: [https://docs.ultralytics.com/datasets/detect/coco/](https://docs.ultralytics.com/datasets/detect/coco/)
 
 ---
 
-## 🤝 Contributing
-
-Contributions welcome! Please open issues or PRs for enhancements.
-Released under the **MIT License**.
-
----
-
-© 2025 Yogee-s — Bridging robotics with state-of-the-art vision.
