@@ -38,7 +38,7 @@ def generate_launch_description():
 
         model = LaunchConfiguration("model")
         model_cmd = DeclareLaunchArgument(
-            "model", default_value="best_yolo11s.pt", description="Model name or path"
+            "model", default_value="/home/commu/Desktop/human_detector_ws/models/best_yolo11s.pt", description="Model name or path"
         )
 
         tracker = LaunchConfiguration("tracker")
@@ -50,7 +50,7 @@ def generate_launch_description():
 
         device = LaunchConfiguration("device")
         device_cmd = DeclareLaunchArgument(
-            "device", default_value="cpu", description="Device to use (GPU/CPU)"
+            "device", default_value="cuda:0", description="Device to use (GPU/CPU)"
         )
 
         enable = LaunchConfiguration("enable")
