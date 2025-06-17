@@ -86,8 +86,18 @@ class App:
         img     = np.asanyarray(color.get_data())
 
         # YOLO tracking
-        results = self.model.track(img, conf=0.6, iou=0.7,
-                                   tracker='bytetrack.yaml', persist=True)[0]
+        #   conf      = 0.6    # Detection confidence threshold: 
+        #                      #   ↑ higher → fewer false positives, but may miss small/occluded objects
+        #                      #   ↓ lower  → more detections, but more noise
+        #
+        #   iou       = 0.7    # NMS IoU threshold:
+        #                      #   ↓ lower → stricter merging, less box overlap
+        #                      #   ↑ higher→ allow closer boxes, may keep duplicates
+
+        # results = self.model.track(img, conf=0.6, iou=0.7,
+        #                            tracker='bytetrack.yaml', persist=True)[0]
+        results = self.model.track(img, conf=0.6, iou=0.8,
+                            tracker='bytetrack.yaml', persist=True)[0]
 
         current, current_ids = {}, set()
 

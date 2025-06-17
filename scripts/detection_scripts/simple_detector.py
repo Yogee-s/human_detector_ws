@@ -6,7 +6,7 @@ from ultralytics import YOLO
 import math
 
 # === CONFIGURATION: edit these only ===
-MODEL_PATH     = 'models/best_yolo11s.pt'
+MODEL_PATH     = '../models/best_yolo11s.pt'
 CONF_THRESH    = 0.6      # confidence threshold
 IOU_THRESH     = 0.7      # NMS IoU threshold
 FRAME_WIDTH    = 640      # RealSense color/depth width

@@ -107,19 +107,19 @@ def generate_launch_description():
                                 "input_image_topic",
                                 default="/camera/camera/color/image_raw"
                              ),
-        "image_reliability": LaunchConfiguration("image_reliability", default="2"),
+        "image_reliability": LaunchConfiguration("image_reliability", default="0"),
 
         # Depth image topic + QoS
         "input_depth_topic": LaunchConfiguration(
                                 "input_depth_topic",
                                 default="/camera/camera/depth/image_rect_raw"
                              ),
-        "depth_image_reliability": LaunchConfiguration("depth_image_reliability", default="2"),
+        "depth_image_reliability": LaunchConfiguration("depth_image_reliability", default="0"),
         "input_depth_info_topic": LaunchConfiguration(
                                      "input_depth_info_topic",
                                      default="/camera/camera/depth/camera_info"
                                   ),
-        "depth_info_reliability": LaunchConfiguration("depth_info_reliability", default="2"),
+        "depth_info_reliability": LaunchConfiguration("depth_info_reliability", default="0"),
 
         # 3D parameters (target_frame must match static_tf_node child_frame)
         "target_frame":               LaunchConfiguration("target_frame", default="base_link"),
@@ -160,3 +160,5 @@ def generate_launch_description():
         include_yolo,
         rviz_node,
     ])
+
+
