@@ -16,6 +16,13 @@ USE_TRACKING   = True
 TRACKER_CONFIG = 'bytetrack.yaml'
 
 # Detection thresholds
+#   conf      = 0.6    # Detection confidence threshold: 
+#                      #   ↑ higher → fewer false positives, but may miss small/occluded objects
+#                      #   ↓ lower  → more detections, but more noise
+#
+#   iou       = 0.7    # NMS IoU threshold:
+#                      #   ↓ lower → stricter merging, less box overlap
+#                      #   ↑ higher→ allow closer boxes, may keep duplicates
 CONF_THRESH    = 0.5
 IOU_THRESH     = 0.4
 
