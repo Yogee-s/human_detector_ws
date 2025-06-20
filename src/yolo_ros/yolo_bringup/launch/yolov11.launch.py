@@ -78,7 +78,7 @@ def generate_launch_description():
     yolo_args = {
         # Boolean flags
         "use_tracking":   LaunchConfiguration("use_tracking", default="True"),
-        "use_3d":         LaunchConfiguration("use_3d",       default="False"),
+        "use_3d":         LaunchConfiguration("use_3d",       default="True"),
 
         # Model / tracker / device
         "model_type":     LaunchConfiguration("model_type", default="YOLO"),

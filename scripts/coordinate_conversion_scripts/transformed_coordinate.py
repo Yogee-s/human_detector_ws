@@ -6,20 +6,32 @@ from ultralytics import YOLO
 import math
 
 # === CONFIGURATION: edit these only ===
-MODEL_PATH     = 'models/best_yolo11s.pt'
-CONF_THRESH    = 0.6      # confidence threshold
-IOU_THRESH     = 0.7      # NMS IoU threshold
+MODEL_PATH     = '/home/commu/Desktop/human_detector_ws/models/best_yolo11s.pt'
+
+# YOLO tracking
+#   conf      = 0.6    # Detection confidence threshold: 
+#                      #   ↑ higher → fewer false positives, but may miss small/occluded objects
+#                      #   ↓ lower  → more detections, but more noise
+#
+#   iou       = 0.7    # NMS IoU threshold:
+#                      #   ↓ lower → stricter merging, less box overlap
+#                      #   ↑ higher→ allow closer boxes, may keep duplicates
+CONF_THRESH    = 0.4      # confidence threshold
+IOU_THRESH     = 0.6      # NMS IoU threshold
 FRAME_WIDTH    = 640      # RealSense color/depth width
 FRAME_HEIGHT   = 480      # RealSense color/depth height
 USE_TRACKING   = True     # False = detect only, True = track()
 TRACKER_CONFIG = 'bytetrack.yaml'
+
+
 # === YOUR CAMERA→MAP TRANSFORM (replace with your computed matrix) ===
 T_MAP_CAM = np.array([
-    [0.9998, -0.0201,  0.0053, 1.200],   # row 0
-    [0.0200,  0.9997, -0.0055, 0.500],   # row 1
-    [-0.0054, 0.0054,  0.9999, 1.500],   # row 2
-    [0.0,     0.0,     0.0,     1.0  ]    # row 3
+    [-0.99031201,  0.05496663,  0.12751783, -1.90818202],
+    [-0.12520336,  0.04368657, -0.99116881,  4.72423410],
+    [-0.06005202, -0.99753203, -0.03638133,  0.28598173],
+    [0.0,          0.0,          0.0,          1.0       ]
 ], dtype=float)
+
 # ===================================================================
 
 def main():
