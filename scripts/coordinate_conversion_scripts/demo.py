@@ -7,9 +7,11 @@ import numpy as np
 import cv2
 from ultralytics import YOLO
 import random
+import torch
+torch.backends.cudnn.benchmark = True
 
 # === CONFIGURATION ===
-MODEL_PATH     = '/home/commu/Desktop/human_detector_ws/models/best_yolo11s.pt'
+MODEL_PATH     = '/home/commu/Desktop/human_detector_ws/models/best_yolo11m.pt'
 FRAME_WIDTH    = 640
 FRAME_HEIGHT   = 480
 USE_TRACKING   = True

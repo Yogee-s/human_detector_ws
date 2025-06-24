@@ -1,26 +1,27 @@
 from ultralytics import YOLO
 import os
 from datetime import datetime
-
+import torch
+torch.backends.cudnn.benchmark = True
 # --- Model Setup ---
-model = YOLO('../src/human_detector/models/yolov11s.pt')  # Or path to your checkpoint
+model = YOLO('/home/commu/Desktop/human_detector_ws/models/yolov11m.pt')  # Or path to your checkpoint
 
 # --- Hyperparameters ---
-epochs = 200
-imgsz = 640                     # Larger image size to push GPU harder
+epochs = 500
+imgsz = 512                     # Larger image size to push GPU harder
 batch_size = 16                 # Increase batch size to use more VRAM
 lr0 = 0.01
 lrf = 0.01
 optimizer = "SGD"
 warmup_epochs = 3
 dropout = 0.1
-patience = 20
+patience = 50
 
 
 # --- Experiment Folder Naming ---
 time_stamp = datetime.now().strftime("%Y%m%d_%H%M")
 exp_name = (
-    f"yolov11s_"
+    f"yolov11m_"
     f"ep{epochs}_"
     f"img{imgsz}_"
     f"bs{batch_size}_"
@@ -46,7 +47,8 @@ results = model.train(
     amp=True,                    # Use automatic mixed precision (faster)
     half=False,                  # Not needed with amp=True
     workers=6,                   # Adjust based on your CPU (e.g., 6 cores)
-    cache=True,                  # Cache dataset in memory (if RAM allows)
+    # cache=True,                  # Cache dataset in memory (if RAM allows)
+    cache='disk',
     rect=False,                  # Use full augmentation (important!)
     verbose=True,
 
@@ -57,8 +59,8 @@ results = model.train(
     translate=0.03,
     scale=0.05,
     fliplr=0.5,
-    mosaic=0.05,
-    mixup=0.0,
+    mosaic=0.15,
+    mixup=0.1,
     copy_paste=0.0,
     perspective=0.001,
 
