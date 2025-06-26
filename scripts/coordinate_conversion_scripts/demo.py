@@ -15,7 +15,7 @@ MODEL_PATH     = '/home/commu/Desktop/human_detector_ws/models/best_yolo11m.pt'
 FRAME_WIDTH    = 640
 FRAME_HEIGHT   = 480
 USE_TRACKING   = True
-TRACKER_CONFIG = 'bytetrack.yaml'
+TRACKER_CONFIG = 'bytetrack.yaml'  # make sure your track_buffer in this YAML is high (e.g. 30)
 
 # Detection thresholds
 #   conf      = 0.6    # Detection confidence threshold: 
@@ -30,8 +30,12 @@ IOU_THRESH     = 0.4
 
 # Proxy resolution for faster inference
 DET_W, DET_H = 320, 240
-# EMA smoothing factor (higher → smoother)
+
+# EMA smoothing factor for 3D map coords (higher → smoother)
 ALPHA_MAP = 0.85
+
+# EMA smoothing factor for 2D box corners (higher → smoother)
+BOX_ALPHA = 0.7
 
 # camera → map transform
 T_MAP_CAM = np.array([
@@ -113,7 +117,8 @@ def main():
     latest_frame = None
     latest_detections = None
     det_lock = threading.Lock()
-    map_ema = {}
+    map_ema = {}     # for smoothing 3D map coords per track id
+    box_ema = {}     # for smoothing 2D box corners per track id
 
     def inference_loop():
         nonlocal latest_frame, latest_detections, running
@@ -121,7 +126,11 @@ def main():
             if latest_frame is None:
                 time.sleep(0.001)
                 continue
+
+            # Resize for faster inference
             small = cv2.resize(latest_frame, (DET_W, DET_H))
+
+            # ByteTrack tracking; relies on your TRACKER_CONFIG having high track_buffer
             results = model.track(
                 small,
                 conf=CONF_THRESH,
@@ -129,9 +138,11 @@ def main():
                 tracker=TRACKER_CONFIG,
                 persist=True
             )[0]
+
             boxes = []
             for box in results.boxes:
                 x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                # scale back to full resolution
                 x1 = int(x1 * scale_x)
                 y1 = int(y1 * scale_y)
                 x2 = int(x2 * scale_x)
@@ -173,6 +184,15 @@ def main():
                     conf_score = det['conf']
                     tid = det['id']
 
+                    # ——— EMA smoothing on 2D box corners to reduce jitter ———
+                    if tid is not None:
+                        prev = box_ema.get(tid, np.array([x1, y1, x2, y2], dtype=float))
+                        sm_box = BOX_ALPHA * prev + (1 - BOX_ALPHA) * np.array([x1, y1, x2, y2], dtype=float)
+                        box_ema[tid] = sm_box
+                        x1, y1, x2, y2 = sm_box.astype(int)
+                    # ————————————————————————————————————————————————
+
+                    # Depth-to-3D
                     cx = (x1 + x2) // 2
                     cy = y2
                     patch = depth[
@@ -189,12 +209,14 @@ def main():
                     P_map = T_MAP_CAM @ np.array([Xc, Yc, Zc, 1.0], dtype=float)
                     Xm_, Ym_, _ = P_map[:3]
 
+                    # ——— EMA smoothing on 3D map coordinates ———
                     if tid is not None:
-                        prev = map_ema.get(tid, np.array([Xm_, Ym_]))
-                        map_ema[tid] = ALPHA_MAP * prev + (1 - ALPHA_MAP) * np.array([Xm_, Ym_])
+                        prev3 = map_ema.get(tid, np.array([Xm_, Ym_], dtype=float))
+                        map_ema[tid] = ALPHA_MAP * prev3 + (1 - ALPHA_MAP) * np.array([Xm_, Ym_], dtype=float)
                         Xm, Ym = map_ema[tid]
                     else:
                         Xm, Ym = Xm_, Ym_
+                    # ——————————————————————————————————————
 
                     draw_box_with_xy(img, x1, y1, x2, y2, cls_name, (Xm, Ym), color, conf_score)
 

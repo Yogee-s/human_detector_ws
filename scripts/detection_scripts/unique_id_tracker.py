@@ -96,7 +96,7 @@ class App:
 
         # results = self.model.track(img, conf=0.6, iou=0.7,
         #                            tracker='bytetrack.yaml', persist=True)[0]
-        results = self.model.track(img, conf=0.6, iou=0.8,
+        results = self.model.track(img, conf=0.4, iou=0.7,
                             tracker='bytetrack.yaml', persist=True)[0]
 
         current, current_ids = {}, set()
