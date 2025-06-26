@@ -45,7 +45,8 @@ class MQTT:
 		password = self.data["MQTTPASSWORD"]
 		host = self.data["MQTTADDRESS"]
 		path = self.data["MQTTPATH"]
-		client_id = "operator_pc"
+		client_id = "robot"
+		# client_id = "operator_pc"
 		port = 443 # for websockets
 		self.topics = self.data["TOPICS"]
 		self.connected = False
@@ -96,3 +97,4 @@ class MQTT:
 		if self.human_detection_topic != None:
 			# print(self.vad_topic, message)
 			self.client.publish(self.human_detection_topic, message)
+		

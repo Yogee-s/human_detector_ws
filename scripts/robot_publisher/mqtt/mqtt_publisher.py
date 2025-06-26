@@ -178,6 +178,7 @@ class HumanPublisher:
         }
         try:
             self.mqtt.publish_human_results(json.dumps(msg))
+            # print("[mqtt] published:", msg)
         except Exception as e:
             print("[mqtt error]", e)
     
