@@ -1,4 +1,6 @@
+#!/usr/bin/env python3
 # MQTT Subsciber and ros2 bridge
+
 import json
 import paho.mqtt.client as mqtt
 import rclpy
@@ -6,12 +8,18 @@ from rclpy.node import Node
 from geometry_msgs.msg import PoseArray, Pose
 from visualization_msgs.msg import Marker
 
+# ─── USER CONFIG ─────────────────────────────────────────────────────────────
 MQTT_USERNAME = "commu"
 MQTT_PASSWORD = "zD5%rZ$m/i+W"
 MQTT_ADDRESS  = "mittsu-talk.jp"
 MQTT_PORT     = 443
 MQTT_PATH     = "/mosmos-test2/ws/"
 MQTT_TOPIC    = "/topic/testing/testroom/realsense_human_detection"
+
+# Toggle these to show/hide each class
+SHOW_TELECO = False
+SHOW_PERSON = True
+# ───────────────────────────────────────────────────────────────────────────────
 
 class MqttHumanBridge(Node):
     def __init__(self):
@@ -21,7 +29,6 @@ class MqttHumanBridge(Node):
         self.people_pub = self.create_publisher(PoseArray, '/people_tracked', 10)
         self.marker_pub = self.create_publisher(Marker,    '/human_markers',   10)
 
-        # track previous marker count for deletion
         self._prev_count = 0
 
         # MQTT client setup
@@ -31,13 +38,13 @@ class MqttHumanBridge(Node):
         self._mqtt.ws_set_options(path=MQTT_PATH)
         self._mqtt.on_connect = self._on_connect
         self._mqtt.on_message = self._on_message
-
         self._mqtt.connect(MQTT_ADDRESS, MQTT_PORT)
         self._mqtt.loop_start()
 
     def _on_connect(self, client, userdata, flags, rc):
         if rc == 0:
             client.subscribe(MQTT_TOPIC)
+            self.get_logger().info(f"Subscribed to {MQTT_TOPIC}")
         else:
             self.get_logger().error(f"MQTT connect failed code {rc}")
 
@@ -47,9 +54,9 @@ class MqttHumanBridge(Node):
         except json.JSONDecodeError:
             return
 
-        # pull out teleco plus people
-        teleco = data.get('teleco')
-        people = data.get('people', [])
+        # respect the two flags here:
+        teleco = data.get('teleco') if SHOW_TELECO else None
+        people = data.get('people', []) if SHOW_PERSON else []
 
         # 1) Publish PoseArray
         pa = PoseArray()
@@ -59,23 +66,24 @@ class MqttHumanBridge(Node):
 
         if teleco:
             p = Pose()
-            p.position.x = float(teleco.get('x',0.0))
-            p.position.y = float(teleco.get('y',0.0))
-            p.position.z = float(teleco.get('z',0.0))
+            p.position.x = float(teleco.get('x', 0.0))
+            p.position.y = float(teleco.get('y', 0.0))
+            p.position.z = float(teleco.get('z', 0.0))
             p.orientation.w = 1.0
             pa.poses.append(p)
             count += 1
 
         for person in people:
             p = Pose()
-            p.position.x = float(person.get('x',0.0))
-            p.position.y = float(person.get('y',0.0))
-            p.position.z = float(person.get('z',0.0))
+            p.position.x = float(person.get('x', 0.0))
+            p.position.y = float(person.get('y', 0.0))
+            p.position.z = float(person.get('z', 0.0))
             p.orientation.w = 1.0
             pa.poses.append(p)
             count += 1
 
-        self.people_pub.publish(pa)
+        if count > 0:
+            self.people_pub.publish(pa)
 
         # 2) Publish Markers
         marker_id = 1
@@ -84,13 +92,10 @@ class MqttHumanBridge(Node):
             m = Marker()
             m.header.frame_id = 'map'
             m.header.stamp = self.get_clock().now().to_msg()
-            m.ns     = 'humans'
-            m.id     = marker_id
-            m.type   = Marker.SPHERE
-            m.action = Marker.ADD
-            m.pose.position.x = float(teleco.get('x',0.0))
-            m.pose.position.y = float(teleco.get('y',0.0))
-            m.pose.position.z = float(teleco.get('z',0.0))
+            m.ns, m.id, m.type, m.action = 'humans', marker_id, Marker.SPHERE, Marker.ADD
+            m.pose.position.x = float(teleco.get('x', 0.0))
+            m.pose.position.y = float(teleco.get('y', 0.0))
+            m.pose.position.z = float(teleco.get('z', 0.0))
             m.pose.orientation.w = 1.0
             m.scale.x = m.scale.y = m.scale.z = 0.3
             # teleco = blue
@@ -102,13 +107,10 @@ class MqttHumanBridge(Node):
             m = Marker()
             m.header.frame_id = 'map'
             m.header.stamp = self.get_clock().now().to_msg()
-            m.ns     = 'humans'
-            m.id     = marker_id
-            m.type   = Marker.SPHERE
-            m.action = Marker.ADD
-            m.pose.position.x = float(person.get('x',0.0))
-            m.pose.position.y = float(person.get('y',0.0))
-            m.pose.position.z = float(person.get('z',0.0))
+            m.ns, m.id, m.type, m.action = 'humans', marker_id, Marker.SPHERE, Marker.ADD
+            m.pose.position.x = float(person.get('x', 0.0))
+            m.pose.position.y = float(person.get('y', 0.0))
+            m.pose.position.z = float(person.get('z', 0.0))
             m.pose.orientation.w = 1.0
             m.scale.x = m.scale.y = m.scale.z = 0.3
             # person = red
@@ -117,13 +119,11 @@ class MqttHumanBridge(Node):
             marker_id += 1
 
         # 3) Delete any old markers
-        for old_id in range(marker_id, self._prev_count+1):
+        for old_id in range(marker_id, self._prev_count + 1):
             m = Marker()
             m.header.frame_id = 'map'
             m.header.stamp = self.get_clock().now().to_msg()
-            m.ns     = 'humans'
-            m.id     = old_id
-            m.action = Marker.DELETE
+            m.ns, m.id, m.action = 'humans', old_id, Marker.DELETE
             self.marker_pub.publish(m)
 
         self._prev_count = marker_id - 1
@@ -132,6 +132,7 @@ class MqttHumanBridge(Node):
         self._mqtt.loop_stop()
         self._mqtt.disconnect()
         super().destroy_node()
+
 
 def main():
     rclpy.init()
@@ -144,5 +145,6 @@ def main():
         node.destroy_node()
         rclpy.shutdown()
 
-if __name__=='__main__':
+
+if __name__ == '__main__':
     main()

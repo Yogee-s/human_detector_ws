@@ -1,8 +1,0 @@
-MQTTUSERNAME: commu
-MQTTPASSWORD: zD5%rZ$m/i+W
-MQTTADDRESS: 'mittsu-talk.jp'
-MQTTPATH: '/mosmos-test2/ws/'
-TOPICS:
-  HUMAN_DETECTION: /topic/testing/testroom/realsense_human_detection
-
-

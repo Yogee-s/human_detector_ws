@@ -25,8 +25,8 @@ TRACKER_CONFIG = 'bytetrack.yaml'  # make sure your track_buffer in this YAML is
 #   iou       = 0.7    # NMS IoU threshold:
 #                      #   ↓ lower → stricter merging, less box overlap
 #                      #   ↑ higher→ allow closer boxes, may keep duplicates
-CONF_THRESH    = 0.5
-IOU_THRESH     = 0.4
+CONF_THRESH    = 0.4
+IOU_THRESH     = 0.5
 
 # Proxy resolution for faster inference
 DET_W, DET_H = 320, 240
@@ -39,11 +39,13 @@ BOX_ALPHA = 0.7
 
 # camera → map transform
 T_MAP_CAM = np.array([
-    [-0.99031201,  0.05496663,  0.12751783, -1.90818202],
-    [-0.12520336,  0.04368657, -0.99116881,  4.72423410],
-    [-0.06005202, -0.99753203, -0.03638133,  0.28598173],
-    [0.0,          0.0,          0.0,          1.0       ]
+  [-0.98295329, -0.06396490,  0.17236971, -1.77364671],
+  [-0.18373697,  0.37541077, -0.90846435,  4.52100218],
+  [-0.00659961, -0.92464872, -0.38076397,  1.48559498],
+  [ 0.00000000,  0.00000000,  0.00000000,  1.00000000],
 ], dtype=float)
+
+
 # =====================
 
 def draw_box_with_xy(img, x1, y1, x2, y2, cls_label, xy, color, conf):

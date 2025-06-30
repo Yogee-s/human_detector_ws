@@ -9,7 +9,7 @@ import cv2
 from ultralytics import YOLO
 import torch
 
-from mqtt_client import MQTT
+from helper_scripts.mqtt_client import MQTT
 
 torch.backends.cudnn.benchmark = True
 
@@ -18,21 +18,23 @@ MODEL_PATH    = '/home/commu/Desktop/human_detector_ws/models/best_yolo11m.pt'
 FRAME_W,FRAME_H = 640,480
 USE_TRACKING  = True
 TRACKER_CFG   = 'bytetrack.yaml'
-CONF_THRESH   = 0.5
-IOU_THRESH    = 0.4
+CONF_THRESH   = 0.4
+IOU_THRESH    = 0.5
 DET_W,DET_H   = 320,240
-ALPHA_MAP     = 0.85
+ALPHA_MAP     = 0.85 # EMA smoothing factor for map coordinates
+
+# === CLASS FILTERING CONFIGURATION ===
+CLASSES_TO_TRACK = ["person", "teleco"]
+# CLASSES_TO_TRACK = ["person"]
 
 # camera → map transform
+# 6 pair of points
 T_MAP_CAM = np.array([
-    [-0.99031201, 0.05496663, 0.12751783, -1.90818202],
-    [-0.12520336, 0.04368657,-0.99116881,  4.72423410],
-    [-0.06005202,-0.99753203,-0.03638133,  0.28598173],
-    [0.0,          0.0,         0.0,         1.0       ]
+  [-0.98295329, -0.06396490,  0.17236971, -1.77364671],
+  [-0.18373697,  0.37541077, -0.90846435,  4.52100218],
+  [-0.00659961, -0.92464872, -0.38076397,  1.48559498],
+  [ 0.00000000,  0.00000000,  0.00000000,  1.00000000],
 ], dtype=float)
-
-# Toggle teleco detection on/off here:
-TELECO_ENABLED = True   # ← comment this out to disable teleco reporting
 
 class HumanPublisher:
     def __init__(self):
@@ -45,6 +47,23 @@ class HumanPublisher:
         self.model = YOLO(MODEL_PATH)
         self.model.fuse()
         self.model = self.model.to('cuda').half()
+        
+        # Convert class names to indices for filtering
+        self.class_indices = []
+        if isinstance(CLASSES_TO_TRACK[0], str):
+            # Convert class names to indices
+            for class_name in CLASSES_TO_TRACK:
+                for idx, name in self.model.names.items():
+                    if name == class_name:
+                        self.class_indices.append(idx)
+                        break
+                else:
+                    print(f"Warning: Class '{class_name}' not found in model")
+        else:
+            # Assume they're already indices
+            self.class_indices = CLASSES_TO_TRACK
+        
+        print(f"Tracking classes: {[self.model.names[i] for i in self.class_indices]}")
         
         # — RealSense setup —
         self.pipeline = rs.pipeline()
@@ -84,12 +103,14 @@ class HumanPublisher:
             depth = cv2.medianBlur(np.asanyarray(df.get_data()), 5)
             small = cv2.resize(img, (DET_W, DET_H))
             
+            # Run inference with class filtering
             res = self.model.track(
                 small,
                 conf=CONF_THRESH,
                 iou=IOU_THRESH,
                 tracker=TRACKER_CFG,
-                persist=True
+                persist=True,
+                classes=self.class_indices  # Only detect specified classes
             )[0]
             
             dets = []
@@ -131,8 +152,14 @@ class HumanPublisher:
                 
                 dets.append((float(Xm), float(Ym), cls_name))
                 
-                # draw box + label + coords
-                color = (255,0,0) if cls_name!="teleco" else (255,128,0)  # orange for teleco, blue-ish BGR=(255,128,0)
+                # draw box + label + coords with different colors for different classes
+                if cls_name == "person":
+                    color = (255, 0, 0)  # Blue for person
+                elif cls_name == "teleco":
+                    color = (0, 0, 255)  # Red for teleco
+                else:
+                    color = (0, 255, 0)  # Green for other classes if they are needed
+                
                 cv2.rectangle(vis, (x1,y1), (x2,y2), color, 2)
                 text = f"{cls_name} ({Xm:.2f},{Ym:.2f})"
                 cv2.putText(vis, text, (x1, y1-10),
@@ -140,11 +167,7 @@ class HumanPublisher:
             
             # update shared detections
             with self.lock:
-                # optionally strip out teleco
-                if TELECO_ENABLED:
-                    self.latest_dets = dets
-                else:
-                    self.latest_dets = [(x,y,c) for x,y,c in dets if c!="teleco"]
+                self.latest_dets = dets
             
             # show window
             cv2.imshow("Detections", vis)
@@ -155,7 +178,8 @@ class HumanPublisher:
     def publish_loop(self):
         while self.running:
             self.send_people_mqtt()
-            time.sleep(0.05)
+            time.sleep(0.2) # publish every 200ms (5Hz)
+            # time.sleep(0.05) # publish every 50ms (20Hz)
     
     def send_people_mqtt(self):
         with self.lock:
@@ -165,15 +189,18 @@ class HumanPublisher:
         teleco = None
         people = []
         for x,y,cls_name in dets:
-            if cls_name=="teleco" and TELECO_ENABLED:
+            if cls_name == "teleco":
                 teleco = {"x":x,"y":y,"z":0.0}
-            else:
+            elif cls_name == "person":
                 people.append({"x":x,"y":y,"z":0.0})
+            # Add other classes to people list if needed
+            # else:
+            #     people.append({"x":x,"y":y,"z":0.0})
         
         msg = {
             "timestamp": time.time(),
             "frame_id":  "map",
-            "teleco":    teleco,   # None if no teleco or TELECO_ENABLED=False
+            "teleco":    teleco,
             "people":    people
         }
         try:
