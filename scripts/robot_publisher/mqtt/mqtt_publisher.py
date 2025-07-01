@@ -18,8 +18,18 @@ MODEL_PATH    = '/home/commu/Desktop/human_detector_ws/models/best_yolo11m.pt'
 FRAME_W,FRAME_H = 640,480
 USE_TRACKING  = True
 TRACKER_CFG   = 'bytetrack.yaml'
+
+# YOLO tracking
+#   conf      = 0.6    # Detection confidence threshold: 
+#                      #   ↑ higher → fewer false positives, but may miss small/occluded objects
+#                      #   ↓ lower  → more detections, but more noise
+#
+#   iou       = 0.7    # NMS IoU threshold:
+#                      #   ↓ lower → stricter merging, less box overlap
+#                      #   ↑ higher→ allow closer boxes, may keep duplicates
 CONF_THRESH   = 0.4
-IOU_THRESH    = 0.5
+IOU_THRESH    = 0.8 #0.5
+
 DET_W,DET_H   = 320,240
 ALPHA_MAP     = 0.85 # EMA smoothing factor for map coordinates
 
@@ -30,9 +40,9 @@ CLASSES_TO_TRACK = ["person", "teleco"]
 # camera → map transform
 # 6 pair of points
 T_MAP_CAM = np.array([
-  [-0.98295329, -0.06396490,  0.17236971, -1.77364671],
-  [-0.18373697,  0.37541077, -0.90846435,  4.52100218],
-  [-0.00659961, -0.92464872, -0.38076397,  1.48559498],
+  [ 0.03519402, -0.50133100,  0.86453954, -3.77415449],
+  [-0.99861694,  0.01616850,  0.05002791,  0.51765710],
+  [-0.03905885, -0.86510451, -0.50006859,  1.66230652],
   [ 0.00000000,  0.00000000,  0.00000000,  1.00000000],
 ], dtype=float)
 
@@ -126,16 +136,38 @@ class HumanPublisher:
                 cls_idx = int(box.cls[0].cpu().numpy())
                 cls_name = self.model.names[cls_idx]
                 
-                # depth at bottom‐center
-                cx,cy = (x1+x2)//2, y2
-                y0,y1_ = max(0,cy-3), min(FRAME_H,cy+4)
-                x0,x1_ = max(0,cx-3), min(FRAME_W,cx+4)
+                # depth at top-center of the box
+                # cx, cy = (x1 + x2) // 2, y1
+                # y0, y1_ = max(0, cy - 3), min(FRAME_H, cy + 4)
+                # x0, x1_ = max(0, cx - 3), min(FRAME_W, cx + 4)
+                # patch = depth[y0:y1_, x0:x1_]
+                # if patch.size == 0:
+                #     continue
+                # z = float(np.median(patch)) * self.depth_scale
+                # if z <= 0:
+                #     continue
+
+                # # depth at box center
+                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                y0, y1_ = max(0, cy - 3), min(FRAME_H, cy + 4)
+                x0, x1_ = max(0, cx - 3), min(FRAME_W, cx + 4)
                 patch = depth[y0:y1_, x0:x1_]
-                if patch.size==0: 
+                if patch.size == 0:
                     continue
-                z = float(np.median(patch))*self.depth_scale
-                if z<=0:
+                z = float(np.median(patch)) * self.depth_scale
+                if z <= 0:
                     continue
+
+                # # depth at bottom‐center
+                # cx,cy = (x1+x2)//2, y2
+                # y0,y1_ = max(0,cy-3), min(FRAME_H,cy+4)
+                # x0,x1_ = max(0,cx-3), min(FRAME_W,cx+4)
+                # patch = depth[y0:y1_, x0:x1_]
+                # if patch.size==0: 
+                #     continue
+                # z = float(np.median(patch))*self.depth_scale
+                # if z<=0:
+                #     continue
                 
                 # project to map
                 Xc,Yc,Zc = rs.rs2_deproject_pixel_to_point(self.intr, [cx,cy], z)
@@ -205,7 +237,7 @@ class HumanPublisher:
         }
         try:
             self.mqtt.publish_human_results(json.dumps(msg))
-            # print("[mqtt] published:", msg)
+            print("[mqtt] published:", msg)
         except Exception as e:
             print("[mqtt error]", e)
     

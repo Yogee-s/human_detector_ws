@@ -77,7 +77,7 @@ Publish detections (`teleco` + `people`) every 50 ms:
 ```bash
 python3 scripts/robot_publisher/mqtt_publisher.py
 ```
-```
+
 
 ### 3) **Robot Subscriber**
 
