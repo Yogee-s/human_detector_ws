@@ -66,7 +66,8 @@ def main():
             if USE_TRACKING:
                 results = model.track(
                     img, conf=CONF_THRESH, iou=IOU_THRESH,
-                    tracker=TRACKER_CONFIG, persist=True
+                    tracker=TRACKER_CONFIG, persist=True,
+                    # classes=[0],  # Only detect class 0 (person)
                 )[0]
             else:
                 results = model(img, conf=CONF_THRESH, iou=IOU_THRESH)[0]
