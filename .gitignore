@@ -4,10 +4,10 @@ log/
 __pycache__/
 *.pyc
 .DS_Store
-data_raw/converted_mp4_videos/
-data_raw/labelled_data/
-data_raw/ros_bags/
-data_training/runs
-data_training/data_person/
-data_training/data_teleco/
-data_training/results/
+scripts/yolo/data_raw/converted_mp4_videos/
+scripts/yolo/data_raw/labelled_data/
+scripts/yolo/data_raw/ros_bags/
+scripts/yolo/data_training/runs
+scripts/yolo/data_training/data_person/
+scripts/yolo/data_training/data_teleco/
+scripts/yolo/data_training/results/
