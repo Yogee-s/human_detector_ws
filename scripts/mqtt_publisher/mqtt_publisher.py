@@ -34,15 +34,15 @@ DET_W,DET_H   = 320,240
 ALPHA_MAP     = 0.85 # EMA smoothing factor for map coordinates
 
 # === CLASS FILTERING CONFIGURATION ===
-CLASSES_TO_TRACK = ["person", "teleco"]
-# CLASSES_TO_TRACK = ["person"]
+# CLASSES_TO_TRACK = ["person", "teleco"]
+CLASSES_TO_TRACK = ["person"]
 
 # camera → map transform
 # 6 pair of points
 T_MAP_CAM = np.array([
-  [ 0.09589393, -0.45845295,  0.88352999, -4.00730774],
-  [-0.98829735,  0.06193290,  0.13940109,  0.54129092],
-  [-0.11862842, -0.88655807, -0.44714885,  1.63494930],
+  [ 0.10099723, -0.36969855,  0.92364633, -3.98448572],
+  [-0.99488402, -0.03537113,  0.09462916,  1.35687245],
+  [-0.00231385, -0.92847825, -0.37137957,  1.35620029],
   [ 0.00000000,  0.00000000,  0.00000000,  1.00000000],
 ], dtype=float)
 
