@@ -3,6 +3,7 @@ import threading
 import time
 import json
 import math
+import sys
 
 import pyrealsense2 as rs
 import numpy as np
@@ -44,11 +45,19 @@ BOUNDARY_POINTS_MAP = np.array([
 
 # camera → map transform (still needed for height estimates)
 T_MAP_CAM = np.array([
-    [ 0.10099723, -0.36969855,  0.92364633, -3.98448572],
-    [-0.99488402, -0.03537113,  0.09462916,  1.35687245],
-    [-0.00231385, -0.92847825, -0.37137957,  1.35620029],
-    [ 0.        ,  0.        ,  0.        ,  1.        ],
+  [-0.17011173,  0.54653199, -0.81997853,  2.01753949],
+  [ 0.98523026,  0.11086059, -0.13050386,  0.75923583],
+  [ 0.01957876, -0.83006790, -0.55731854,  1.49016417],
+  [ 0.00000000,  0.00000000,  0.00000000,  1.00000000],
 ], dtype=float)
+
+# === SLAM POINT CONFIGURATION ===
+# Set your target point in SLAM/map coordinates here
+# You can modify these values or pass them as command line arguments
+DEFAULT_SLAM_POINT = (-0.9, 0.0)  # Default point in map coordinates (x, y)
+
+# Vertical offset to make SLAM point appear lower (adjust as needed)
+SLAM_POINT_VERTICAL_OFFSET = 0.2  # meters - positive value makes it appear lower
 
 
 def point_in_polygon(point, polygon):
@@ -71,7 +80,8 @@ def map_to_pixel(map_point, transform_matrix, intrinsics):
     """Convert map coordinates to pixel coordinates for visualization"""
     try:
         T_CAM_MAP = np.linalg.inv(transform_matrix)
-        hom = np.array([map_point[0], map_point[1], 0.0, 1.0])
+        # Apply vertical offset to make the point appear lower
+        hom = np.array([map_point[0], map_point[1], -SLAM_POINT_VERTICAL_OFFSET, 1.0])
         cam = T_CAM_MAP @ hom
         if cam[2] > 0:
             u, v = rs.rs2_project_point_to_pixel(intrinsics, cam[:3])
@@ -79,6 +89,23 @@ def map_to_pixel(map_point, transform_matrix, intrinsics):
     except:
         pass
     return None
+
+
+def parse_slam_point(args):
+    """Parse SLAM point from command line arguments"""
+    if len(args) >= 3:
+        try:
+            x = float(args[1])
+            y = float(args[2])
+            return (x, y)
+        except ValueError:
+            print(f"Error: Invalid coordinates '{args[1]}' '{args[2]}'. Using default point.")
+            return DEFAULT_SLAM_POINT
+    else:
+        print(f"Usage: {args[0]} <x> <y>")
+        print(f"Example: {args[0]} 1.5 -2.3")
+        print(f"Using default point: {DEFAULT_SLAM_POINT}")
+        return DEFAULT_SLAM_POINT
 
 
 class PoseHeightDetector:
@@ -153,7 +180,11 @@ def draw_text_block(img, text_lines, position, font=cv2.FONT_HERSHEY_SIMPLEX,
 
 
 class HumanPublisher:
-    def __init__(self):
+    def __init__(self, slam_point):
+        # Store the SLAM point
+        self.slam_point = slam_point
+        print(f"Target SLAM point set to: ({slam_point[0]:.2f}, {slam_point[1]:.2f})")
+        
         # MQTT client
         self.mqtt = MQTT()
         threading.Thread(target=self.mqtt.connect, daemon=True).start()
@@ -185,14 +216,22 @@ class HumanPublisher:
         self.boundary_points = BOUNDARY_POINTS_MAP
         print(f"Boundary points (pixel coords):\n{self.boundary_points}")
 
-        # Point selection
-        self.selected_point = None  # Will store (x, y) in map coordinates
-        self.selected_pixel = None  # Will store (x, y) in pixel coordinates for visualization
+        # Calculate pixel coordinates for visualization of SLAM point
+        self.slam_pixel = map_to_pixel(self.slam_point, T_MAP_CAM, self.intr)
+        if self.slam_pixel:
+            print(f"SLAM point projects to pixel: {self.slam_pixel}")
+        else:
+            print("SLAM point is not visible in current camera view")
         
         # Detection smoothing - improved for multi-person scenarios
         self.detection_smoothing = {}  # track_id -> smoothed values
         self.detection_history = {}   # track_id -> history of detections
-        self.max_history_length = 5  # Keep last 5 detections for validation
+        self.max_history_length = 3  # Reduced history length to be more responsive
+        
+        # Track last seen time for each track_id to handle disappearing tracks
+        self.last_seen = {}
+        self.track_timeout = 30  # frames - remove track if not seen for this many frames
+        self.frame_count = 0
 
         # state
         self.running = True
@@ -200,38 +239,30 @@ class HumanPublisher:
         self.latest_dets = []
         self.map_ema = {}
         self.nearest_person = None
-        self.nearest_person_index = None  # NEW: Store the index of nearest person
+        self.nearest_person_track_id = None  # Track the ID of nearest person
         self.current_depth = None
+        self.all_detections = []  # Store all valid detections for visualization
 
         # threads
         threading.Thread(target=self.inference_loop, daemon=True).start()
         threading.Thread(target=self.publish_loop, daemon=True).start()
 
-    def mouse_callback(self, event, x, y, flags, param):
-        """Handle mouse clicks to select a point"""
-        if event == cv2.EVENT_LBUTTONDOWN:
-            # Convert pixel coordinates to map coordinates
-            try:
-                with self.lock:
-                    if self.current_depth is not None:
-                        depth_value = self.current_depth[y, x] * self.depth_scale
-                        if depth_value > 0:
-                            # Convert to 3D camera coordinates
-                            Xc, Yc, Zc = rs.rs2_deproject_pixel_to_point(self.intr, [x, y], depth_value)
-                            # Transform to map coordinates
-                            P = T_MAP_CAM @ np.array([Xc, Yc, Zc, 1.0], float)
-                            map_x, map_y = P[0], P[1]
-                            
-                            self.selected_point = (map_x, map_y)
-                            self.selected_pixel = (x, y)
-                            print(f"Selected point: Pixel({x}, {y}) -> Map({map_x:.2f}, {map_y:.2f})")
-                        else:
-                            print("No valid depth at clicked point")
-            except Exception as e:
-                print(f"Error converting clicked point: {e}")
+    def update_slam_point(self, new_point):
+        """Update the SLAM point dynamically"""
+        with self.lock:
+            self.slam_point = new_point
+            self.slam_pixel = map_to_pixel(self.slam_point, T_MAP_CAM, self.intr)
+            print(f"SLAM point updated to: ({new_point[0]:.2f}, {new_point[1]:.2f})")
+            if self.slam_pixel:
+                print(f"New SLAM point projects to pixel: {self.slam_pixel}")
+            else:
+                print("New SLAM point is not visible in current camera view")
 
     def validate_detection(self, tid, new_box):
         """Validate detection against history to prevent confusion between people"""
+        if tid is None:
+            return True  # Always allow detections without tracking ID
+            
         if tid not in self.detection_history:
             self.detection_history[tid] = []
         
@@ -246,10 +277,9 @@ class HumanPublisher:
             movement = math.sqrt((cx2 - cx1)**2 + (cy2 - cy1)**2)
             
             # If movement is too large, it might be a tracking error
-            if movement > 100:  # pixels - adjust threshold as needed
+            if movement > 150:  # Increased threshold to be less restrictive
                 print(f"Warning: Large movement detected for ID {tid}: {movement:.1f} pixels")
-                # You could choose to reject this detection or reduce smoothing
-                return False
+                # Don't reject, just warn - let the tracker handle it
         
         # Add to history
         history.append(new_box)
@@ -259,26 +289,26 @@ class HumanPublisher:
         return True
 
     def find_nearest_person(self, detections):
-        """Find the person nearest to the selected point in map coordinates"""
-        if not self.selected_point or not detections:
+        """Find the person nearest to the SLAM point in map coordinates"""
+        if not detections:
             return None, None
         
         min_distance = float('inf')
         nearest = None
-        nearest_index = None
+        nearest_track_id = None
         
-        for i, det in enumerate(detections):
+        for det in detections:
             # Calculate distance in map coordinates
-            dx = det['x'] - self.selected_point[0]
-            dy = det['y'] - self.selected_point[1]
+            dx = det['x'] - self.slam_point[0]
+            dy = det['y'] - self.slam_point[1]
             distance = math.sqrt(dx*dx + dy*dy)
             
             if distance < min_distance:
                 min_distance = distance
                 nearest = det
-                nearest_index = i
+                nearest_track_id = det['track_id']
         
-        return nearest, nearest_index
+        return nearest, nearest_track_id
 
     def draw_boundary(self, img):
         """Draw the 4‐point pixel‐boundary directly."""
@@ -288,17 +318,23 @@ class HumanPublisher:
         cv2.addWeighted(overlay, 0.1, img, 0.9, 0, img)
         cv2.polylines(img, [pts], True, (0, 255, 0), 2)
 
-    def draw_selected_point(self, img):
-        """Draw the selected point"""
-        if self.selected_pixel:
-            # Draw selected point
-            cv2.circle(img, self.selected_pixel, 8, (0, 0, 255), -1)
-            cv2.circle(img, self.selected_pixel, 12, (0, 0, 255), 2)
+    def draw_slam_point(self, img):
+        """Draw the SLAM point if it's visible in the camera view"""
+        if self.slam_pixel:
+            # Draw SLAM point with a different style
+            cv2.circle(img, self.slam_pixel, 10, (0, 255, 255), -1)  # Cyan filled circle
+            cv2.circle(img, self.slam_pixel, 15, (0, 255, 255), 3)   # Cyan outline
+            
+            # Draw crosshair
+            cv2.line(img, (self.slam_pixel[0]-20, self.slam_pixel[1]), 
+                    (self.slam_pixel[0]+20, self.slam_pixel[1]), (0, 255, 255), 2)
+            cv2.line(img, (self.slam_pixel[0], self.slam_pixel[1]-20), 
+                    (self.slam_pixel[0], self.slam_pixel[1]+20), (0, 255, 255), 2)
             
             # Draw text
-            cv2.putText(img, "Selected", 
-                       (self.selected_pixel[0] + 15, self.selected_pixel[1] - 15),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+            cv2.putText(img, f"SLAM Point ({self.slam_point[0]:.1f}, {self.slam_point[1]:.1f})", 
+                       (self.slam_pixel[0] + 20, self.slam_pixel[1] - 20),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
 
     def calculate_height_from_keypoints(self, kps, depth):
         return self.pose_detector.calculate_nose_height_3d(
@@ -307,7 +343,6 @@ class HumanPublisher:
 
     def inference_loop(self):
         cv2.namedWindow("Detections", cv2.WINDOW_NORMAL)
-        cv2.setMouseCallback("Detections", self.mouse_callback)
         
         while self.running:
             frames = self.pipeline.wait_for_frames()
@@ -320,17 +355,19 @@ class HumanPublisher:
             img = np.asanyarray(cf.get_data())
             depth = cv2.medianBlur(np.asanyarray(df.get_data()), 5)
             
-            # Store current depth for mouse callback
+            # Store current depth
             with self.lock:
                 self.current_depth = depth.copy()
+                current_slam_point = self.slam_point
+                current_slam_pixel = self.slam_pixel
             
             vis = img.copy()
 
             # draw the pixel‐boundary
             self.draw_boundary(vis)
             
-            # draw selected point
-            self.draw_selected_point(vis)
+            # draw SLAM point
+            self.draw_slam_point(vis)
 
             res = self.model.track(
                 img, conf=CONF_THRESH, iou=IOU_THRESH,
@@ -355,7 +392,6 @@ class HumanPublisher:
 
                     # Use bottom middle of bounding box for boundary check
                     cx = (x1 + x2) // 2  # horizontal center
-                    # cy = y2  # bottom of bounding box (even if partial human)
                     cy = y2 - 20  # Adjust to avoid edge case at bottom
                     
                     # Validate detection against history
@@ -418,7 +454,7 @@ class HumanPublisher:
                         'confidence': confidence,
                         'box': [x1, y1, x2, y2],
                         'keypoints': kps,
-                        'bottom_center': (cx, cy)  # Store center for visualization
+                        'bottom_center': (cx, cy)
                     })
 
             # Clean up old tracking data
@@ -431,19 +467,23 @@ class HumanPublisher:
                     if tid in self.detection_history:
                         del self.detection_history[tid]
 
-            # Find nearest person - now returns both person and index
-            nearest_person, nearest_index = self.find_nearest_person(detection_objects)
+            # Find nearest person - this will always find the current nearest person
+            nearest_person, nearest_track_id = self.find_nearest_person(detection_objects)
             
-            # Draw detections
-            for i, det in enumerate(detection_objects):
+            # Draw ALL detections with proper highlighting
+            for det in detection_objects:
                 x1, y1, x2, y2 = det['box']
                 
-                # Highlight ONLY the nearest person by comparing index
-                if nearest_index is not None and i == nearest_index:
+                # Check if this detection is the nearest person
+                is_nearest = (nearest_track_id is not None and 
+                             det['track_id'] == nearest_track_id)
+                
+                # Color coding: Yellow for nearest, Purple for others
+                if is_nearest:
                     color = (0, 255, 255)  # Yellow for nearest
                     thickness = 3
                 else:
-                    color = (147, 20, 255)  # Default purple
+                    color = (147, 20, 255)  # Purple for others
                     thickness = 2
                 
                 cv2.rectangle(vis, (x1, y1), (x2, y2), color, thickness)
@@ -459,37 +499,41 @@ class HumanPublisher:
                         cv2.circle(vis, (int(kx),int(ky)), 3, kcolor, -1)
 
                 # Draw info text
-                distance_text = ""
-                if nearest_index is not None and i == nearest_index:
-                    if self.selected_point:
-                        dx = det['x'] - self.selected_point[0]
-                        dy = det['y'] - self.selected_point[1]
-                        distance = math.sqrt(dx*dx + dy*dy)
-                        distance_text = f"Dist: {distance:.2f}m"
-
                 text = [
                     f"ID: {det.get('track_id', 'N/A')}",
                     f"Conf: {det['confidence']:.2f}",
                     f"Height: {det['height']:.2f}m" if det['height'] is not None else "Height: N/A"
                 ]
-                if distance_text:
-                    text.append(distance_text)
+                
+                # Add distance info for nearest person
+                if is_nearest:
+                    dx = det['x'] - current_slam_point[0]
+                    dy = det['y'] - current_slam_point[1]
+                    distance = math.sqrt(dx*dx + dy*dy)
+                    text.append(f"Dist: {distance:.2f}m")
+                    text.append("NEAREST")
                 
                 draw_text_block(vis, text, (x1+8, y1+8))
 
-            # Draw instructions
+            # Draw instructions and info
             instructions = [
-                "Click to select a point",
-                "Nearest person highlighted in yellow",
+                f"SLAM Point: ({current_slam_point[0]:.2f}, {current_slam_point[1]:.2f})",
+                f"People in boundary: {len(detection_objects)}",
+                f"Nearest person ID: {nearest_track_id if nearest_track_id else 'None'}",
+                "Yellow box = nearest person (published)",
+                "Purple boxes = other people in boundary",
+                "Cyan crosshair = SLAM point",
                 "Blue dot = center point (boundary check)"
             ]
             draw_text_block(vis, instructions, (10, 10), 
                           text_color=(255, 255, 255), bg_color=(0, 0, 0, 200))
 
+            # Update shared state
             with self.lock:
                 self.latest_dets = dets
                 self.nearest_person = nearest_person
-                self.nearest_person_index = nearest_index
+                self.nearest_person_track_id = nearest_track_id
+                self.all_detections = detection_objects.copy()
 
             cv2.imshow("Detections", vis)
             if cv2.waitKey(1) == 27:
@@ -502,12 +546,14 @@ class HumanPublisher:
             time.sleep(0.2)
 
     def send_people_mqtt(self):
-        """Send only the nearest person to the selected point"""
+        """Send only the nearest person to the SLAM point"""
         with self.lock:
             nearest = self.nearest_person
+            current_slam_point = self.slam_point
+            total_people = len(self.all_detections)
         
         people = []
-        if nearest and self.selected_point:
+        if nearest:
             pd = {
                 "x": nearest['x'], 
                 "y": nearest['y'], 
@@ -518,10 +564,10 @@ class HumanPublisher:
             if nearest['height'] is not None:
                 pd["height"] = nearest['height']
             
-            # Add distance to selected point
-            dx = nearest['x'] - self.selected_point[0]
-            dy = nearest['y'] - self.selected_point[1]
-            pd["distance_to_selected"] = math.sqrt(dx*dx + dy*dy)
+            # Add distance to SLAM point
+            dx = nearest['x'] - current_slam_point[0]
+            dy = nearest['y'] - current_slam_point[1]
+            pd["distance_to_slam_point"] = math.sqrt(dx*dx + dy*dy)
             
             people.append(pd)
         
@@ -529,10 +575,11 @@ class HumanPublisher:
             "timestamp": time.time(), 
             "frame_id": "map", 
             "people": people,
-            "selected_point": {
-                "x": self.selected_point[0] if self.selected_point else None,
-                "y": self.selected_point[1] if self.selected_point else None
-            }
+            "slam_point": {
+                "x": current_slam_point[0],
+                "y": current_slam_point[1]
+            },
+            "total_people_in_boundary": total_people
         }
         
         try:
@@ -547,12 +594,23 @@ class HumanPublisher:
 
 
 def main():
-    pub = HumanPublisher()
+    # Parse command line arguments for SLAM point
+    slam_point = parse_slam_point(sys.argv)
+    
+    pub = HumanPublisher(slam_point)
     try:
-        print("Human detector started. Click on the camera window to select a point.")
-        print("Only the nearest person to the selected point will be published via MQTT.")
-        print("Green dots show center of bounding boxes (used for boundary check).")
+        print("Human detector started with SLAM point tracking.")
+        print(f"Target SLAM point: ({slam_point[0]:.2f}, {slam_point[1]:.2f})")
+        print("All people in boundary will be shown with bounding boxes.")
+        print("The nearest person to the SLAM point will be highlighted in YELLOW.")
+        print("Only the nearest person will be published via MQTT.")
+        print("Cyan crosshair shows the SLAM point position in camera view.")
         print("Press ESC to exit.")
+        
+        # Example of how to update the SLAM point dynamically
+        # You can uncomment and modify this for testing
+        # threading.Thread(target=lambda: (time.sleep(10), pub.update_slam_point((2.0, 3.0))), daemon=True).start()
+        
         while pub.running:
             time.sleep(0.1)
     except KeyboardInterrupt:
