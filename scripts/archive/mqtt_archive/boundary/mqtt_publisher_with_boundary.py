@@ -31,10 +31,10 @@ CLASSES_TO_TRACK = ["person", "teleco"]
 # === PIXEL BOUNDARY (user-defined on CV window) ===
 # Replace with your clicked pixel coordinates
 BOUNDARY_POINTS_MAP = np.array([
-    [130, 474],
-    [189, 92],
-    [585, 82],
-    [593, 469],
+    [148, 468],
+    [193, 120],
+    [445, 95],
+    [567, 282],
 ], dtype=np.int32)
 
 # camera → map transform (for deprojected points)

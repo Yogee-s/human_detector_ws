@@ -31,20 +31,19 @@ CLASSES_TO_TRACK = ["person"]
 # === BOUNDARY CONFIGURATION ===
 # 4‐point polygon in pixel coordinates
 BOUNDARY_POINTS_MAP = np.array([
-    [176, 392],
-    [314, 57],
-    [598, 297],
-    [479, 479],
+    [203, 196],
+    [383, 202],
+    [417, 446],
+    [64, 430],
 ], dtype=np.int32)
 
 # camera → map transform (still needed for height estimates)
 T_MAP_CAM = np.array([
-    [ 0.10099723, -0.36969855,  0.92364633, -3.98448572],
-    [-0.99488402, -0.03537113,  0.09462916,  1.35687245],
-    [-0.00231385, -0.92847825, -0.37137957,  1.35620029],
-    [ 0.        ,  0.        ,  0.        ,  1.        ],
+  [-0.17604257,  0.56505579, -0.80605271,  1.99071568],
+  [ 0.98420120,  0.11675092, -0.13310608,  0.73550774],
+  [ 0.01889503, -0.81675038, -0.57668172,  1.69016847],
+  [ 0.00000000,  0.00000000,  0.00000000,  1.00000000],
 ], dtype=float)
-
 
 def point_in_polygon(point, polygon):
     """Check if a point is inside a polygon using ray casting algorithm"""

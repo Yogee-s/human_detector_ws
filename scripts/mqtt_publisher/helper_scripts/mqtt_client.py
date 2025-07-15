@@ -24,7 +24,7 @@ class MQTT:
 	def load_config(self):
 
 		try:
-			with open("mqtt_config_python.yaml", "r") as yamlfile:
+			with open("helper_scripts/mqtt_config_python.yaml", "r") as yamlfile:
 				data = yaml.load(yamlfile, Loader=yaml.FullLoader)
 				self.human_detection_topic = "/topic/testing/testroom/realsense_human_detection"
 				print("Publishing to Human detection", self.human_detection_topic)
