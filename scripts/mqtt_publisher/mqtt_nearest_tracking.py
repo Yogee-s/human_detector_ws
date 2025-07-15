@@ -29,7 +29,7 @@ DET_W, DET_H  = 320, 240
 ALPHA_MAP     = 0.75  # Reduced EMA smoothing factor for map coordinates
 
 # Smoothing parameters - reduced for better multi-person handling
-ALPHA_DETECTION = 0.5  # Reduced EMA smoothing factor for detection stability
+ALPHA_DETECTION = 0.3  # Reduced EMA smoothing factor for detection stability
 
 # Only track persons
 CLASSES_TO_TRACK = ["person"]
@@ -56,6 +56,9 @@ T_MAP_CAM = np.array([
 # You can modify these values or pass them as command line arguments
 DEFAULT_SLAM_POINT = (-0.9, 0.0)  # Default point in map coordinates (x, y)
 
+# Vertical offset to make SLAM point appear lower (adjust as needed)
+SLAM_POINT_VERTICAL_OFFSET = 0.2  # meters - positive value makes it appear lower
+
 
 def point_in_polygon(point, polygon):
     """Check if a point is inside a polygon using ray casting algorithm"""
@@ -77,7 +80,8 @@ def map_to_pixel(map_point, transform_matrix, intrinsics):
     """Convert map coordinates to pixel coordinates for visualization"""
     try:
         T_CAM_MAP = np.linalg.inv(transform_matrix)
-        hom = np.array([map_point[0], map_point[1], 0.0, 1.0])
+        # Apply vertical offset to make the point appear lower
+        hom = np.array([map_point[0], map_point[1], -SLAM_POINT_VERTICAL_OFFSET, 1.0])
         cam = T_CAM_MAP @ hom
         if cam[2] > 0:
             u, v = rs.rs2_project_point_to_pixel(intrinsics, cam[:3])
@@ -222,7 +226,12 @@ class HumanPublisher:
         # Detection smoothing - improved for multi-person scenarios
         self.detection_smoothing = {}  # track_id -> smoothed values
         self.detection_history = {}   # track_id -> history of detections
-        self.max_history_length = 5  # Keep last 5 detections for validation
+        self.max_history_length = 3  # Reduced history length to be more responsive
+        
+        # Track last seen time for each track_id to handle disappearing tracks
+        self.last_seen = {}
+        self.track_timeout = 30  # frames - remove track if not seen for this many frames
+        self.frame_count = 0
 
         # state
         self.running = True
@@ -230,8 +239,9 @@ class HumanPublisher:
         self.latest_dets = []
         self.map_ema = {}
         self.nearest_person = None
-        self.nearest_person_index = None
+        self.nearest_person_track_id = None  # Track the ID of nearest person
         self.current_depth = None
+        self.all_detections = []  # Store all valid detections for visualization
 
         # threads
         threading.Thread(target=self.inference_loop, daemon=True).start()
@@ -250,6 +260,9 @@ class HumanPublisher:
 
     def validate_detection(self, tid, new_box):
         """Validate detection against history to prevent confusion between people"""
+        if tid is None:
+            return True  # Always allow detections without tracking ID
+            
         if tid not in self.detection_history:
             self.detection_history[tid] = []
         
@@ -264,9 +277,9 @@ class HumanPublisher:
             movement = math.sqrt((cx2 - cx1)**2 + (cy2 - cy1)**2)
             
             # If movement is too large, it might be a tracking error
-            if movement > 100:  # pixels - adjust threshold as needed
+            if movement > 150:  # Increased threshold to be less restrictive
                 print(f"Warning: Large movement detected for ID {tid}: {movement:.1f} pixels")
-                return False
+                # Don't reject, just warn - let the tracker handle it
         
         # Add to history
         history.append(new_box)
@@ -282,9 +295,9 @@ class HumanPublisher:
         
         min_distance = float('inf')
         nearest = None
-        nearest_index = None
+        nearest_track_id = None
         
-        for i, det in enumerate(detections):
+        for det in detections:
             # Calculate distance in map coordinates
             dx = det['x'] - self.slam_point[0]
             dy = det['y'] - self.slam_point[1]
@@ -293,9 +306,9 @@ class HumanPublisher:
             if distance < min_distance:
                 min_distance = distance
                 nearest = det
-                nearest_index = i
+                nearest_track_id = det['track_id']
         
-        return nearest, nearest_index
+        return nearest, nearest_track_id
 
     def draw_boundary(self, img):
         """Draw the 4‐point pixel‐boundary directly."""
@@ -454,19 +467,23 @@ class HumanPublisher:
                     if tid in self.detection_history:
                         del self.detection_history[tid]
 
-            # Find nearest person
-            nearest_person, nearest_index = self.find_nearest_person(detection_objects)
+            # Find nearest person - this will always find the current nearest person
+            nearest_person, nearest_track_id = self.find_nearest_person(detection_objects)
             
-            # Draw detections
-            for i, det in enumerate(detection_objects):
+            # Draw ALL detections with proper highlighting
+            for det in detection_objects:
                 x1, y1, x2, y2 = det['box']
                 
-                # Highlight ONLY the nearest person
-                if nearest_index is not None and i == nearest_index:
+                # Check if this detection is the nearest person
+                is_nearest = (nearest_track_id is not None and 
+                             det['track_id'] == nearest_track_id)
+                
+                # Color coding: Yellow for nearest, Purple for others
+                if is_nearest:
                     color = (0, 255, 255)  # Yellow for nearest
                     thickness = 3
                 else:
-                    color = (147, 20, 255)  # Default purple
+                    color = (147, 20, 255)  # Purple for others
                     thickness = 2
                 
                 cv2.rectangle(vis, (x1, y1), (x2, y2), color, thickness)
@@ -482,37 +499,41 @@ class HumanPublisher:
                         cv2.circle(vis, (int(kx),int(ky)), 3, kcolor, -1)
 
                 # Draw info text
-                distance_text = ""
-                if nearest_index is not None and i == nearest_index:
-                    dx = det['x'] - current_slam_point[0]
-                    dy = det['y'] - current_slam_point[1]
-                    distance = math.sqrt(dx*dx + dy*dy)
-                    distance_text = f"Dist: {distance:.2f}m"
-
                 text = [
                     f"ID: {det.get('track_id', 'N/A')}",
                     f"Conf: {det['confidence']:.2f}",
                     f"Height: {det['height']:.2f}m" if det['height'] is not None else "Height: N/A"
                 ]
-                if distance_text:
-                    text.append(distance_text)
+                
+                # Add distance info for nearest person
+                if is_nearest:
+                    dx = det['x'] - current_slam_point[0]
+                    dy = det['y'] - current_slam_point[1]
+                    distance = math.sqrt(dx*dx + dy*dy)
+                    text.append(f"Dist: {distance:.2f}m")
+                    text.append("NEAREST")
                 
                 draw_text_block(vis, text, (x1+8, y1+8))
 
             # Draw instructions and info
             instructions = [
                 f"SLAM Point: ({current_slam_point[0]:.2f}, {current_slam_point[1]:.2f})",
-                "Nearest person highlighted in yellow",
+                f"People in boundary: {len(detection_objects)}",
+                f"Nearest person ID: {nearest_track_id if nearest_track_id else 'None'}",
+                "Yellow box = nearest person (published)",
+                "Purple boxes = other people in boundary",
                 "Cyan crosshair = SLAM point",
                 "Blue dot = center point (boundary check)"
             ]
             draw_text_block(vis, instructions, (10, 10), 
                           text_color=(255, 255, 255), bg_color=(0, 0, 0, 200))
 
+            # Update shared state
             with self.lock:
                 self.latest_dets = dets
                 self.nearest_person = nearest_person
-                self.nearest_person_index = nearest_index
+                self.nearest_person_track_id = nearest_track_id
+                self.all_detections = detection_objects.copy()
 
             cv2.imshow("Detections", vis)
             if cv2.waitKey(1) == 27:
@@ -529,6 +550,7 @@ class HumanPublisher:
         with self.lock:
             nearest = self.nearest_person
             current_slam_point = self.slam_point
+            total_people = len(self.all_detections)
         
         people = []
         if nearest:
@@ -556,7 +578,8 @@ class HumanPublisher:
             "slam_point": {
                 "x": current_slam_point[0],
                 "y": current_slam_point[1]
-            }
+            },
+            "total_people_in_boundary": total_people
         }
         
         try:
@@ -578,7 +601,9 @@ def main():
     try:
         print("Human detector started with SLAM point tracking.")
         print(f"Target SLAM point: ({slam_point[0]:.2f}, {slam_point[1]:.2f})")
-        print("Only the nearest person to the SLAM point will be published via MQTT.")
+        print("All people in boundary will be shown with bounding boxes.")
+        print("The nearest person to the SLAM point will be highlighted in YELLOW.")
+        print("Only the nearest person will be published via MQTT.")
         print("Cyan crosshair shows the SLAM point position in camera view.")
         print("Press ESC to exit.")
         
