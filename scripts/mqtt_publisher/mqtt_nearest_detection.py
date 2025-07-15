@@ -23,10 +23,10 @@ IOU_THRESH                 = 0.8
 
 # 4-point pixel boundary polygon
 BOUNDARY_POINTS_MAP = np.array([
-    [63, 429],
-    [202, 197],
-    [385, 201],
-    [419, 449],
+    [65, 429],
+    [209, 166],
+    [383, 173],
+    [418, 445],
 ], dtype=np.int32)
 
 # Camera→map transform for SLAM point projection
@@ -212,14 +212,23 @@ class HumanPublisher:
     def draw_slam_point(self, img):
         if not self.slam_pixel:
             return
-        x,y = self.slam_pixel
-        cv2.circle(img, (x,y), 10, (0,255,255), -1)
-        cv2.circle(img, (x,y), 15, (0,255,255), 3)
-        cv2.line(img, (x-20,y),(x+20,y),(0,255,255),2)
-        cv2.line(img, (x,y-20),(x,y+20),(0,255,255),2)
-        cv2.putText(img,
-            f"SLAM ({self.slam_point[0]:.1f},{self.slam_point[1]:.1f})",
-            (x+20,y-20), cv2.FONT_HERSHEY_SIMPLEX,0.5,(0,255,255),2)
+        x, y = self.slam_pixel
+
+        # draw on overlay for transparency
+        overlay = img.copy()
+        # small filled dot
+        cv2.circle(overlay, (x, y), 3, (0, 255, 255), -1)
+        # thin outline circle
+        cv2.circle(overlay, (x, y), 6, (0, 255, 255), 1)
+        # shorter, thinner crosshair
+        cv2.line(overlay, (x - 15, y), (x + 15, y), (0, 255, 255), 1)
+        cv2.line(overlay, (x, y - 15), (x, y + 15), (0, 255, 255), 1)
+
+        # blend overlay back into img with low alpha
+        alpha = 0.6
+        cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, img)
+
+
 
     def calculate_height_from_keypoints(self, kps, depth):
         return self.pose_detector.calculate_nose_height_3d(
