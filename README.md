@@ -19,21 +19,29 @@ Real-time 2D detection of **humans** and a custom **Teleco robot**, plus 3D dist
 ### 1) MQTT Calibration
 Compute the rigid-body camera→map transform by collecting paired 3D points.
 ```bash
-python3 scripts/mqtt_publisher/mqtt_calibration.py
+python3 scripts/mqtt_publisher/helper_scripts/mqtt_calibration.py
 ```
 * **[SPACE]**: record one (camera, robot) correspondence
 * **ESC or Ctrl+C**: finish and print a copy-pasteable `T_MAP_CAM = np.array([...], dtype=float)`
 
-### 2) MQTT Publisher
+### 2) Boundary Calibration
+Get the boundary coordinates from camera frame.
+```bash
+python3 scripts/mqtt_publisher/helper_scripts/boundary_coordinates.py
+```
+* **[click]**: Pick 4 points
+* **ESC or Ctrl+C**: finish and print a copy-pasteable `Boundary Coordinates`
+
+### 3) MQTT Publisher
 Publish detections (`teleco` + `people`) every 50ms:
 ```bash
-python3 scripts/mqtt_publisher/mqtt_publisher_with_boundary.py
+python3 scripts/mqtt_publisher/mqtt_nearest_detection.py
 ```
 
-### 3) MQTT Subscriber
+### 4) MQTT Subscriber
 Run on the robot to subscribe & create a topic in ROS 2:
 ```bash
-python3 scripts/archive/mqtt_archive/mqtt_subscriber.py
+python3 scripts/archive/mqtt_archive/teleco_scripts/mqtt_subscriber.py
 ```
 
 Topics published:
