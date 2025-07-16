@@ -16,7 +16,7 @@ from helper_scripts.mqtt_client import MQTT
 torch.backends.cudnn.benchmark = True
 
 # === CONFIGURATION ===
-POSE_MODEL_PATH            = '/home/commu/Desktop/human_detector_ws/models/yolov11n-pose.pt'
+POSE_MODEL_PATH            = '/home/commu/Desktop/human_detector_ws/models/yolo11m-pose.pt'
 FRAME_W, FRAME_H           = 640, 480
 CONF_THRESH                = 0.4
 IOU_THRESH                 = 0.8
@@ -324,7 +324,7 @@ class HumanPublisher:
                 f"In boundary: {len(detection_objects)}",
                 f"Nearest idx: {nearest_idx if nearest_idx is not None else 'None'}",
                 "Yellow = nearest, Purple = others",
-                "Cyan = SLAM, Blue dot = center"
+                "Yellow = SLAM, Blue dot = center"
             ]
             draw_text_block(vis, info, (10,10), bg_color=(0,0,0,200))
 
