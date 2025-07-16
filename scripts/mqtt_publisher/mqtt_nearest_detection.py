@@ -217,18 +217,16 @@ class HumanPublisher:
         # draw on overlay for transparency
         overlay = img.copy()
         # small filled dot
-        cv2.circle(overlay, (x, y), 3, (0, 255, 255), -1)
+        cv2.circle(overlay, (x, y), 3, (255, 255, 0), -1)
         # thin outline circle
-        cv2.circle(overlay, (x, y), 6, (0, 255, 255), 1)
+        cv2.circle(overlay, (x, y), 6, (255, 255, 0), 1)
         # shorter, thinner crosshair
-        cv2.line(overlay, (x - 15, y), (x + 15, y), (0, 255, 255), 1)
-        cv2.line(overlay, (x, y - 15), (x, y + 15), (0, 255, 255), 1)
+        cv2.line(overlay, (x - 15, y), (x + 15, y), (255, 255, 0), 1)
+        cv2.line(overlay, (x, y - 15), (x, y + 15), (255, 255, 0), 1)
 
         # blend overlay back into img with low alpha
         alpha = 0.6
         cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, img)
-
-
 
     def calculate_height_from_keypoints(self, kps, depth):
         return self.pose_detector.calculate_nose_height_3d(
@@ -267,8 +265,17 @@ class HumanPublisher:
                     x1, y1, x2, y2 = map(int, box[:4])
                     conf = float(box[4])
 
-                    cx = (x1+x2)//2
-                    cy = y2 - 20
+                    # Get nose keypoint for x-coordinate
+                    nose_kp = kps[self.pose_detector.NOSE_IDX]
+                    if len(nose_kp) >= 3 and nose_kp[2] > 0.5:
+                        # Use nose x-coordinate, but keep offset from bottom of box
+                        cx = int(nose_kp[0])
+                        cy = y2 - 20
+                    else:
+                        # Fallback to center of box if nose not detected
+                        cx = (x1+x2)//2
+                        cy = y2 - 20
+
                     if not point_in_polygon((cx,cy), self.boundary_points):
                         continue
 
@@ -317,16 +324,39 @@ class HumanPublisher:
                 if is_nearest:
                     dist = math.hypot(det['x']-self.slam_point[0], det['y']-self.slam_point[1])
                     txt += [f"Dist: {dist:.2f}m", "NEAREST"]
-                draw_text_block(vis, txt, (x1+8, y1+8))
+                draw_text_block(vis, txt, (x1+8, y1+8), 
+                              font_scale=0.35, 
+                              bg_color=(0,0,0,120), 
+                              padding=4, 
+                              line_spacing=12)
 
+            # Create expanded canvas with clean header
+            legend_height = 100
+            expanded_vis = np.zeros((vis.shape[0] + legend_height, vis.shape[1], 3), dtype=np.uint8)
+            
+            # Clean dark header background
+            expanded_vis[:legend_height, :] = [32, 32, 32]  # Clean dark gray
+            
+            # Thin accent line at bottom of header
+            cv2.line(expanded_vis, (0, legend_height-1), (vis.shape[1], legend_height-1), (80, 180, 255), 2)
+            
+            expanded_vis[legend_height:, :] = vis
+            
+            # Clean, organized info display
             info = [
-                f"SLAM Point: ({self.slam_point[0]:.2f},{self.slam_point[1]:.2f})",
-                f"In boundary: {len(detection_objects)}",
-                f"Nearest idx: {nearest_idx if nearest_idx is not None else 'None'}",
-                "Yellow = nearest, Purple = others",
-                "Yellow = SLAM, Blue dot = center"
+                f"SLAM: ({self.slam_point[0]:.2f}, {self.slam_point[1]:.2f})  |  Detected: {len(detection_objects)}  |  Nearest: {nearest_idx if nearest_idx is not None else 'None'}",
+                "",
+                "Cyan = SLAM Point    Yellow = Nearest Person    Purple = Others",
+                "Blue = Detection Center (nose-aligned)"
             ]
-            draw_text_block(vis, info, (10,10), bg_color=(0,0,0,200))
+            draw_text_block(expanded_vis, info, (15, 15), 
+                          font_scale=0.5,
+                          text_color=(240, 240, 240),
+                          bg_color=(32, 32, 32, 0),  # Transparent background
+                          padding=0,
+                          line_spacing=18)
+            
+            vis = expanded_vis
 
             with self.lock:
                 self.latest_dets    = detection_objects
