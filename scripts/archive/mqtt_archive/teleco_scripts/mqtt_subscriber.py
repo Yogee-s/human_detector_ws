@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-# MQTT Subsciber and ros2 bridge
-
 import json
 import paho.mqtt.client as mqtt
+
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import PoseArray, Pose
-from visualization_msgs.msg import Marker
+from visualization_msgs.msg import Marker, MarkerArray
+from builtin_interfaces.msg import Duration
+from tf2_ros import StaticTransformBroadcaster
+from geometry_msgs.msg import TransformStamped
 
-# ─── USER CONFIG ─────────────────────────────────────────────────────────────
+# ─── USER CONFIG ────────────────────────────────────────────────────────────
 MQTT_USERNAME = "commu"
 MQTT_PASSWORD = "zD5%rZ$m/i+W"
 MQTT_ADDRESS  = "mittsu-talk.jp"
@@ -16,22 +18,31 @@ MQTT_PORT     = 443
 MQTT_PATH     = "/mosmos-test2/ws/"
 MQTT_TOPIC    = "/topic/testing/testroom/realsense_human_detection"
 
-# Toggle these to show/hide each class
-SHOW_TELECO = False
 SHOW_PERSON = True
-# ───────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 
 class MqttHumanBridge(Node):
     def __init__(self):
         super().__init__('mqtt_human_bridge')
 
-        # ROS publishers
-        self.people_pub = self.create_publisher(PoseArray, '/people_tracked', 10)
-        self.marker_pub = self.create_publisher(Marker,    '/human_markers',   10)
+        # PoseArray + MarkerArray publishers
+        self.people_pub = self.create_publisher(PoseArray,   '/people_tracked', 10)
+        self.marker_pub = self.create_publisher(MarkerArray, '/human_markers', 10)
 
-        self._prev_count = 0
+        # TF broadcaster so RViz has a 'map' frame
+        self._tf_broadcaster = StaticTransformBroadcaster(self)
+        static_tf = TransformStamped()
+        static_tf.header.frame_id = 'map'
+        static_tf.child_frame_id  = 'people_tracked'
+        static_tf.header.stamp     = self.get_clock().now().to_msg()
+        # identity transform
+        static_tf.transform.translation.x = 0.0
+        static_tf.transform.translation.y = 0.0
+        static_tf.transform.translation.z = 0.0
+        static_tf.transform.rotation.w    = 1.0
+        self._tf_broadcaster.sendTransform(static_tf)
 
-        # MQTT client setup
+        # MQTT over WebSockets+TLS
         self._mqtt = mqtt.Client(client_id="ros2_bridge", transport="websockets")
         self._mqtt.tls_set()
         self._mqtt.username_pw_set(MQTT_USERNAME, MQTT_PASSWORD)
@@ -44,9 +55,9 @@ class MqttHumanBridge(Node):
     def _on_connect(self, client, userdata, flags, rc):
         if rc == 0:
             client.subscribe(MQTT_TOPIC)
-            self.get_logger().info(f"Subscribed to {MQTT_TOPIC}")
+            self.get_logger().info(f"✅ Subscribed to {MQTT_TOPIC}")
         else:
-            self.get_logger().error(f"MQTT connect failed code {rc}")
+            self.get_logger().error(f"❌ MQTT connect failed code {rc}")
 
     def _on_message(self, client, userdata, msg):
         try:
@@ -54,79 +65,54 @@ class MqttHumanBridge(Node):
         except json.JSONDecodeError:
             return
 
-        # respect the two flags here:
-        teleco = data.get('teleco') if SHOW_TELECO else None
         people = data.get('people', []) if SHOW_PERSON else []
 
         # 1) Publish PoseArray
         pa = PoseArray()
-        pa.header.frame_id = 'map'
-        pa.header.stamp = self.get_clock().now().to_msg()
-        count = 0
-
-        if teleco:
-            p = Pose()
-            p.position.x = float(teleco.get('x', 0.0))
-            p.position.y = float(teleco.get('y', 0.0))
-            p.position.z = float(teleco.get('z', 0.0))
-            p.orientation.w = 1.0
-            pa.poses.append(p)
-            count += 1
+        pa.header.frame_id = 'people_tracked'
+        pa.header.stamp    = self.get_clock().now().to_msg()
 
         for person in people:
             p = Pose()
-            p.position.x = float(person.get('x', 0.0))
-            p.position.y = float(person.get('y', 0.0))
-            p.position.z = float(person.get('z', 0.0))
+            p.position.x    = float(person.get('x', 0.0))
+            p.position.y    = float(person.get('y', 0.0))
+            p.position.z    = float(person.get('z', 0.0))
             p.orientation.w = 1.0
             pa.poses.append(p)
-            count += 1
 
-        if count > 0:
+        if pa.poses:
             self.people_pub.publish(pa)
 
-        # 2) Publish Markers
-        marker_id = 1
-
-        if teleco:
+        # 2) Publish MarkerArray
+        ma = MarkerArray()
+        for idx, person in enumerate(people):
             m = Marker()
-            m.header.frame_id = 'map'
-            m.header.stamp = self.get_clock().now().to_msg()
-            m.ns, m.id, m.type, m.action = 'humans', marker_id, Marker.SPHERE, Marker.ADD
-            m.pose.position.x = float(teleco.get('x', 0.0))
-            m.pose.position.y = float(teleco.get('y', 0.0))
-            m.pose.position.z = float(teleco.get('z', 0.0))
-            m.pose.orientation.w = 1.0
-            m.scale.x = m.scale.y = m.scale.z = 0.3
-            # teleco = blue
-            m.color.r, m.color.g, m.color.b, m.color.a = 0.0, 0.0, 1.0, 1.0
-            self.marker_pub.publish(m)
-            marker_id += 1
+            m.header.frame_id = pa.header.frame_id
+            m.header.stamp    = pa.header.stamp
+            m.ns    = 'people'
+            m.id    = idx
+            m.type  = Marker.SPHERE
+            m.action= Marker.ADD
 
-        for person in people:
-            m = Marker()
-            m.header.frame_id = 'map'
-            m.header.stamp = self.get_clock().now().to_msg()
-            m.ns, m.id, m.type, m.action = 'humans', marker_id, Marker.SPHERE, Marker.ADD
             m.pose.position.x = float(person.get('x', 0.0))
             m.pose.position.y = float(person.get('y', 0.0))
             m.pose.position.z = float(person.get('z', 0.0))
             m.pose.orientation.w = 1.0
+
+            # sphere size
             m.scale.x = m.scale.y = m.scale.z = 0.3
-            # person = red
-            m.color.r, m.color.g, m.color.b, m.color.a = 1.0, 0.0, 0.0, 1.0
-            self.marker_pub.publish(m)
-            marker_id += 1
 
-        # 3) Delete any old markers
-        for old_id in range(marker_id, self._prev_count + 1):
-            m = Marker()
-            m.header.frame_id = 'map'
-            m.header.stamp = self.get_clock().now().to_msg()
-            m.ns, m.id, m.action = 'humans', old_id, Marker.DELETE
-            self.marker_pub.publish(m)
+            # red = person
+            m.color.r = 1.0
+            m.color.a = 1.0
 
-        self._prev_count = marker_id - 1
+            # never auto‐expire
+            m.lifetime = Duration(sec=0, nanosec=0)
+
+            ma.markers.append(m)
+
+        if ma.markers:
+            self.marker_pub.publish(ma)
 
     def destroy_node(self):
         self._mqtt.loop_stop()

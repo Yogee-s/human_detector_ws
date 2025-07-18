@@ -94,7 +94,7 @@ class MQTT:
 
 
 	def publish_human_results(self, message):
-		print(self.human_detection_topic)
+		# print(self.human_detection_topic)
 		if self.human_detection_topic != None:
 			# print(self.vad_topic, message)
 			self.client.publish(self.human_detection_topic, message)

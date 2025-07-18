@@ -31,11 +31,12 @@ BOUNDARY_POINTS_MAP = np.array([
 
 # Camera→map transform for SLAM point projection
 T_MAP_CAM = np.array([
-  [-0.17011173,  0.54653199, -0.81997853,  2.01753949],
-  [ 0.98523026,  0.11086059, -0.13050386,  0.75923583],
-  [ 0.01957876, -0.83006790, -0.55731854,  1.49016417],
+  [-0.15253896,  0.52898873, -0.83480703,  2.07710514],
+  [ 0.98813506,  0.09694561, -0.11912449,  0.81320340],
+  [ 0.01791536, -0.84307323, -0.53750030,  1.40365008],
   [ 0.00000000,  0.00000000,  0.00000000,  1.00000000],
 ], dtype=float)
+
 
 DEFAULT_SLAM_POINT         = (-0.9, 0.0)
 SLAM_POINT_VERTICAL_OFFSET = 0.2  # meters
@@ -252,7 +253,7 @@ class HumanPublisher:
 
             res = self.model.predict(
                 img, conf=CONF_THRESH, iou=IOU_THRESH,
-                classes=[0]
+                classes=[0], verbose=False
             )[0]
 
             detection_objects = []
@@ -402,6 +403,8 @@ class HumanPublisher:
         }
         try:
             self.mqtt.publish_human_results(json.dumps(msg))
+            # print(f"[mqtt] Published {len(people)} people, total in boundary: {msg['total_in_boundary']}")
+            print(f"[mqtt] Published nearest person: {nearest['x']:.2f}, {nearest['y']:.2f}, height: {nearest.get('height', 'N/A')}")
         except Exception as e:
             print("[mqtt error]", e)
 
