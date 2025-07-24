@@ -31,11 +31,12 @@ BOUNDARY_POINTS_MAP = np.array([
 
 # Camera→map transform for SLAM point projection
 T_MAP_CAM = np.array([
-  [-0.17011173,  0.54653199, -0.81997853,  2.01753949],
-  [ 0.98523026,  0.11086059, -0.13050386,  0.75923583],
-  [ 0.01957876, -0.83006790, -0.55731854,  1.49016417],
+  [-0.15253896,  0.52898873, -0.83480703,  2.07710514],
+  [ 0.98813506,  0.09694561, -0.11912449,  0.81320340],
+  [ 0.01791536, -0.84307323, -0.53750030,  1.40365008],
   [ 0.00000000,  0.00000000,  0.00000000,  1.00000000],
 ], dtype=float)
+
 
 DEFAULT_SLAM_POINT         = (-0.9, 0.0)
 SLAM_POINT_VERTICAL_OFFSET = 0.2  # meters
@@ -81,6 +82,47 @@ class PoseHeightDetector:
         self.NOSE_IDX        = 0
         self.LEFT_ANKLE_IDX  = 15
         self.RIGHT_ANKLE_IDX = 16
+
+    def get_ankle_midpoint(self, keypoints):
+        """Get the midpoint between left and right ankles, with fallback options"""
+        left_ankle = keypoints[self.LEFT_ANKLE_IDX]
+        right_ankle = keypoints[self.RIGHT_ANKLE_IDX]
+        
+        # Check if both ankles are detected with good confidence
+        left_valid = len(left_ankle) >= 3 and left_ankle[2] > 0.5
+        right_valid = len(right_ankle) >= 3 and right_ankle[2] > 0.5
+        
+        if left_valid and right_valid:
+            # Both ankles detected - use midpoint
+            mid_x = (left_ankle[0] + right_ankle[0]) / 2
+            mid_y = (left_ankle[1] + right_ankle[1]) / 2
+            return int(mid_x), int(mid_y), "both_ankles"
+        elif left_valid:
+            # Only left ankle detected
+            return int(left_ankle[0]), int(left_ankle[1]), "left_ankle"
+        elif right_valid:
+            # Only right ankle detected
+            return int(right_ankle[0]), int(right_ankle[1]), "right_ankle"
+        else:
+            # No ankles detected - return None
+            return None, None, "no_ankles"
+
+    def get_nose_aligned_bottom_fallback(self, keypoints, bounding_box):
+        """Get nose-aligned bottom middle of bounding box as fallback position"""
+        nose = keypoints[self.NOSE_IDX]
+        x1, y1, x2, y2 = bounding_box
+        
+        # Check if nose is detected with good confidence
+        if len(nose) >= 3 and nose[2] > 0.5:
+            # Use nose X coordinate aligned with bottom of bounding box
+            cx = int(nose[0])
+            cy = y2 - 20  # Bottom of box minus 20 pixels
+            return cx, cy, "nose_aligned_bottom"
+        else:
+            # Final fallback to center of box
+            cx = (x1 + x2) // 2
+            cy = y2 - 20
+            return cx, cy, "box_center"
 
     def calculate_nose_height_3d(self, keypoints, depth_image, depth_intrinsics, depth_scale):
         nose = keypoints[self.NOSE_IDX]
@@ -252,7 +294,7 @@ class HumanPublisher:
 
             res = self.model.predict(
                 img, conf=CONF_THRESH, iou=IOU_THRESH,
-                classes=[0]
+                classes=[0], verbose=False
             )[0]
 
             detection_objects = []
@@ -265,16 +307,15 @@ class HumanPublisher:
                     x1, y1, x2, y2 = map(int, box[:4])
                     conf = float(box[4])
 
-                    # Get nose keypoint for x-coordinate
-                    nose_kp = kps[self.pose_detector.NOSE_IDX]
-                    if len(nose_kp) >= 3 and nose_kp[2] > 0.5:
-                        # Use nose x-coordinate, but keep offset from bottom of box
-                        cx = int(nose_kp[0])
-                        cy = y2 - 20
+                    # Get ankle midpoint for better positioning
+                    ankle_x, ankle_y, ankle_method = self.pose_detector.get_ankle_midpoint(kps)
+                    
+                    if ankle_x is None:
+                        # Use nose-aligned bottom middle of bounding box as fallback
+                        cx, cy, positioning_method = self.pose_detector.get_nose_aligned_bottom_fallback(kps, (x1, y1, x2, y2))
                     else:
-                        # Fallback to center of box if nose not detected
-                        cx = (x1+x2)//2
-                        cy = y2 - 20
+                        cx, cy = ankle_x, ankle_y
+                        positioning_method = ankle_method
 
                     if not point_in_polygon((cx,cy), self.boundary_points):
                         continue
@@ -298,7 +339,8 @@ class HumanPublisher:
                         'confidence': conf,
                         'box': [x1, y1, x2, y2],
                         'keypoints': kps,
-                        'bottom_center': (cx, cy)
+                        'bottom_center': (cx, cy),
+                        'positioning_method': positioning_method
                     })
 
             nearest_det, nearest_idx = self.find_nearest_person(detection_objects)
@@ -310,16 +352,68 @@ class HumanPublisher:
 
                 cv2.rectangle(vis, (x1,y1), (x2,y2), color, thickness)
                 cx, cy = det['bottom_center']
-                cv2.circle(vis, (cx,cy), 4, (255,0,0), -1)
+                
+                # Different colors and styles for different positioning methods
+                if det['positioning_method'] == "both_ankles":
+                    circle_color = (0,255,0)  # Green for both ankles
+                    circle_size = 6
+                    outline_size = 8
+                elif det['positioning_method'] in ["left_ankle", "right_ankle"]:
+                    circle_color = (0,255,255)  # Yellow for single ankle
+                    circle_size = 5
+                    outline_size = 7
+                elif det['positioning_method'] == "nose_aligned_bottom":
+                    circle_color = (255,128,0)  # Orange for nose-aligned bottom
+                    circle_size = 5
+                    outline_size = 7
+                else:
+                    circle_color = (255,0,0)  # Blue for box center
+                    circle_size = 4
+                    outline_size = 6
+                
+                cv2.circle(vis, (cx,cy), circle_size, circle_color, -1)
+                cv2.circle(vis, (cx,cy), outline_size, (255,255,255), 2)  # White outline
+                
+                # Add position indicator text
+                pos_text = ""
+                if det['positioning_method'] == "both_ankles":
+                    pos_text = "MID"
+                elif det['positioning_method'] == "left_ankle":
+                    pos_text = "L"
+                elif det['positioning_method'] == "right_ankle":
+                    pos_text = "R"
+                elif det['positioning_method'] == "nose_aligned_bottom":
+                    pos_text = "NAB"
+                else:
+                    pos_text = "B"
+                    
+                cv2.putText(vis, pos_text, (cx-12, cy-12), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255,255,255), 2)
 
+                # Draw keypoints with special highlighting for ankles and nose
                 for j,(kx,ky,kc) in enumerate(det['keypoints']):
                     if kc > 0.5:
-                        kcolor = (0,0,255) if j == self.pose_detector.NOSE_IDX else (0,255,0)
+                        if j == self.pose_detector.NOSE_IDX:
+                            kcolor = (0,0,255)  # Red for nose
+                        elif j in [self.pose_detector.LEFT_ANKLE_IDX, self.pose_detector.RIGHT_ANKLE_IDX]:
+                            kcolor = (0,255,0)  # Green for ankles
+                        else:
+                            kcolor = (0,255,255)  # Yellow for other keypoints
                         cv2.circle(vis, (int(kx),int(ky)), 3, kcolor, -1)
 
+                # Enhanced text information
+                method_display = {
+                    "both_ankles": "Both Ankles",
+                    "left_ankle": "Left Ankle",
+                    "right_ankle": "Right Ankle", 
+                    "nose_aligned_bottom": "Nose-Aligned Bottom",
+                    "box_center": "Box Center"
+                }
+                
                 txt = [
                     f"Conf: {det['confidence']:.2f}",
-                    f"Height: {det['height']:.2f}m" if det['height'] is not None else "Height: N/A"
+                    f"Height: {det['height']:.2f}m" if det['height'] is not None else "Height: N/A",
+                    f"Pos: {method_display.get(det['positioning_method'], 'Unknown')}"
                 ]
                 if is_nearest:
                     dist = math.hypot(det['x']-self.slam_point[0], det['y']-self.slam_point[1])
@@ -331,7 +425,7 @@ class HumanPublisher:
                               line_spacing=12)
 
             # Create expanded canvas with clean header
-            legend_height = 100
+            legend_height = 80
             expanded_vis = np.zeros((vis.shape[0] + legend_height, vis.shape[1], 3), dtype=np.uint8)
             
             # Clean dark header background
@@ -345,9 +439,8 @@ class HumanPublisher:
             # Clean, organized info display
             info = [
                 f"SLAM: ({self.slam_point[0]:.2f}, {self.slam_point[1]:.2f})  |  Detected: {len(detection_objects)}  |  Nearest: {nearest_idx if nearest_idx is not None else 'None'}",
-                "",
-                "Cyan = SLAM Point    Yellow = Nearest Person    Purple = Others",
-                "Blue = Detection Center (nose-aligned)"
+                "Position: Green=Ankle Mid, Yellow=Single Ankle",
+                "          Orange=Nose-Aligned Bottom, Blue=Box Center"
             ]
             draw_text_block(expanded_vis, info, (15, 15), 
                           font_scale=0.5,
@@ -383,7 +476,8 @@ class HumanPublisher:
                 "x": nearest['x'],
                 "y": nearest['y'],
                 "z": 0.0,
-                "confidence": nearest['confidence']
+                "confidence": nearest['confidence'],
+                "positioning_method": nearest['positioning_method']
             }
             if nearest['height'] is not None:
                 pd["height"] = nearest['height']
@@ -402,6 +496,11 @@ class HumanPublisher:
         }
         try:
             self.mqtt.publish_human_results(json.dumps(msg))
+            if nearest:
+                method_info = f" ({nearest['positioning_method']})"
+                print(f"[mqtt] Published nearest person: {nearest['x']:.2f}, {nearest['y']:.2f}, height: {nearest.get('height', 'N/A')}{method_info}")
+            else:
+                print(f"[mqtt] No people detected in boundary")
         except Exception as e:
             print("[mqtt error]", e)
 
@@ -415,6 +514,7 @@ def main():
     pub = HumanPublisher(slam_point)
     try:
         print("Human detector started—press ESC to exit.")
+        print("Position priority: Both Ankles > Single Ankle > Nose-Aligned Bottom > Box Center")
         while pub.running:
             time.sleep(0.1)
     except KeyboardInterrupt:
