@@ -16,7 +16,7 @@ MQTT_PASSWORD = "zD5%rZ$m/i+W"
 MQTT_ADDRESS = "mittsu-talk.jp"
 MQTT_PORT = 443
 MQTT_PATH = "/mosmos-test2/ws/"
-MQTT_TOPIC = "/topic/testing/testroom/ROVER-003/info"
+MQTT_TOPIC = "/topic/testing/testroom/ROVER-001/info"
 YOLO_MODEL = "/home/commu/Desktop/human_detector_ws/models/best_yolo11m.pt"
 # FRAME_W, FRAME_H = 640, 480
 FRAME_W, FRAME_H = 1280, 720
@@ -25,7 +25,7 @@ IOU_THRESH = 0.5
 TRACKER_CFG = "bytetrack.yaml"
 
 # Height configuration
-ROBOT_HEIGHT_IN_MAP = 0.5  # Known height of robot in SLAM map coordinates (meters)
+ROBOT_HEIGHT_IN_MAP = 1.36  # Known height of robot in SLAM map coordinates (meters)
 
 # GUI Layout constants
 GUI_HEIGHT = 150  # Height for GUI area below video

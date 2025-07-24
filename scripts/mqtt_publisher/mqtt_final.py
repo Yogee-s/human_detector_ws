@@ -33,11 +33,12 @@ BOUNDARY_POINTS_MAP = np.array([
 # NEW 3D-to-3D transformation matrix from Kabsch calibration
 # Replace this with your actual calibrated matrix from the second script
 T_MAP_CAM = np.array([
-    [-0.17011173,  0.54653199, -0.81997853,  2.01753949],
-    [ 0.98523026,  0.11086059, -0.13050386,  0.75923583],
-    [ 0.01957876, -0.83006790, -0.55731854,  1.49016417],
-    [ 0.00000000,  0.00000000,  0.00000000,  1.00000000],
+  [-0.32567945,  0.87583040,  0.35616570, -1.07191809],
+  [ 0.92533681,  0.21791592,  0.31026511, -0.56075412],
+  [ 0.19412544,  0.43062021, -0.88140884,  5.52776705],
+  [ 0.00000000,  0.00000000,  0.00000000,  1.00000000],
 ], dtype=float)
+
 
 DEFAULT_SLAM_POINT         = (-0.9, 0.0)
 SLAM_POINT_VERTICAL_OFFSET = 0.2  # meters
