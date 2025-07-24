@@ -186,6 +186,103 @@ def draw_text_block(img, lines, pos, font=cv2.FONT_HERSHEY_SIMPLEX,
         cv2.putText(img, t, (x, cy), font, font_scale, text_color, thickness)
         cy += line_spacing
 
+def draw_modern_header(img, slam_point, detection_count, nearest_person, header_height=100):
+    """Draw a modern, aesthetic header with key information"""
+    width = img.shape[1]
+    
+    # Create gradient background
+    overlay = img.copy()
+    for i in range(header_height):
+        alpha = 0.95 - (i / header_height) * 0.3  # Gradient fade
+        color_intensity = int(25 + (i / header_height) * 15)  # Slight gradient
+        cv2.line(overlay, (0, i), (width, i), (color_intensity, color_intensity, color_intensity), 1)
+    
+    # Blend overlay
+    cv2.addWeighted(overlay, 0.9, img, 0.1, 0, img)
+    
+    # Add subtle accent line at bottom
+    cv2.line(img, (0, header_height-2), (width, header_height-2), (70, 170, 255), 3)
+    
+    # Left side - SLAM info, detection count, and position method
+    slam_text = f"SLAM: ({slam_point[0]:.1f}, {slam_point[1]:.1f})"
+    cv2.putText(img, slam_text, (20, 30), cv2.FONT_HERSHEY_DUPLEX, 0.7, (255, 255, 255), 2)
+    
+    detect_text = f"Detected: {detection_count}"
+    cv2.putText(img, detect_text, (20, 55), cv2.FONT_HERSHEY_DUPLEX, 0.6, (180, 255, 180), 2)
+    
+    # Position method for nearest person - more prominent
+    if nearest_person:
+        method_display = {
+            "both_ankles": "Both Ankles",
+            "left_ankle": "Left Ankle", 
+            "right_ankle": "Right Ankle",
+            "nose_aligned_bottom": "Nose-Bottom",
+            "box_center": "Box Center"
+        }
+        method_text = f"Method: {method_display.get(nearest_person['positioning_method'], 'Unknown')}"
+        cv2.putText(img, method_text, (20, 80), cv2.FONT_HERSHEY_DUPLEX, 0.65, (255, 255, 100), 2)
+    
+    # Right side - Height and Distance display (single line format)
+    if nearest_person and nearest_person.get('height') is not None:
+        height_m = nearest_person['height']
+        height_text = f"Height: {height_m:.2f}m"
+        
+        # Calculate distance
+        dist = math.hypot(nearest_person['x'] - slam_point[0], nearest_person['y'] - slam_point[1])
+        dist_text = f"Distance: {dist:.1f}m"
+        
+        # Calculate sizes for longer boxes with larger text
+        height_text_size = cv2.getTextSize(height_text, cv2.FONT_HERSHEY_DUPLEX, 1.2, 3)[0]
+        height_box_width = height_text_size[0] + 30
+        height_box_height = 50
+        
+        dist_text_size = cv2.getTextSize(dist_text, cv2.FONT_HERSHEY_DUPLEX, 1.2, 3)[0]
+        dist_box_width = dist_text_size[0] + 30
+        dist_box_height = 50
+        
+        # Position boxes side by side
+        spacing = 15
+        total_width = height_box_width + spacing + dist_box_width
+        start_x = width - total_width - 20
+        box_y = 25
+        
+        # Height box
+        height_box_x = start_x
+        overlay = img.copy()
+        cv2.rectangle(overlay, (height_box_x, box_y), (height_box_x + height_box_width, box_y + height_box_height), (0, 150, 255), -1)
+        cv2.addWeighted(overlay, 0.8, img, 0.2, 0, img)
+        cv2.rectangle(img, (height_box_x, box_y), (height_box_x + height_box_width, box_y + height_box_height), (100, 200, 255), 2)
+        
+        # Height text (single line with black labels)
+        label_size = cv2.getTextSize("Height:", cv2.FONT_HERSHEY_DUPLEX, 1.2, 3)[0]
+        # Draw label in black
+        cv2.putText(img, "Height:", (height_box_x + 10, box_y + 32), cv2.FONT_HERSHEY_DUPLEX, 1.2, (0, 0, 0), 3)
+        # Draw value part in bright white
+        value_x = height_box_x + 10 + label_size[0] + 8
+        cv2.putText(img, f"{height_m:.2f}m", (value_x, box_y + 32), cv2.FONT_HERSHEY_DUPLEX, 1.2, (255, 255, 255), 3)
+        
+        # Distance box - back to original darker color
+        dist_box_x = height_box_x + height_box_width + spacing
+        overlay = img.copy()
+        cv2.rectangle(overlay, (dist_box_x, box_y), (dist_box_x + dist_box_width, box_y + dist_box_height), (255, 150, 0), -1)
+        cv2.addWeighted(overlay, 0.8, img, 0.2, 0, img)
+        cv2.rectangle(img, (dist_box_x, box_y), (dist_box_x + dist_box_width, box_y + dist_box_height), (255, 200, 100), 2)
+        
+        # Distance text (single line with black labels)
+        dist_label_size = cv2.getTextSize("Distance:", cv2.FONT_HERSHEY_DUPLEX, 1.2, 3)[0]
+        # Draw label in black
+        cv2.putText(img, "Distance:", (dist_box_x + 10, box_y + 32), cv2.FONT_HERSHEY_DUPLEX, 1.2, (0, 0, 0), 3)
+        # Draw value part in bright white
+        dist_value_x = dist_box_x + 10 + dist_label_size[0] + 8
+        cv2.putText(img, f"{dist:.1f}m", (dist_value_x, box_y + 32), cv2.FONT_HERSHEY_DUPLEX, 1.2, (255, 255, 255), 3)
+        
+    else:
+        # No height/distance available
+        no_data_text = "No Person Data"
+        text_size = cv2.getTextSize(no_data_text, cv2.FONT_HERSHEY_DUPLEX, 0.8, 2)[0]
+        text_x = width - text_size[0] - 20
+        cv2.putText(img, no_data_text, (text_x, 50), cv2.FONT_HERSHEY_DUPLEX, 0.8, (150, 150, 150), 2)
+
 class HumanPublisher:
     def __init__(self, slam_point):
         self.slam_point = slam_point
@@ -402,53 +499,27 @@ class HumanPublisher:
                             kcolor = (0,255,255)  # Yellow for other keypoints
                         cv2.circle(vis, (int(kx),int(ky)), 3, kcolor, -1)
 
-                # Enhanced text information
-                method_display = {
-                    "both_ankles": "Both Ankles",
-                    "left_ankle": "Left Ankle",
-                    "right_ankle": "Right Ankle", 
-                    "nose_aligned_bottom": "Nose-Aligned Bottom",
-                    "box_center": "Box Center"
-                }
-                
+                # Enhanced text information (more compact)
                 txt = [
                     f"Conf: {det['confidence']:.2f}",
-                    f"Height: {det['height']:.2f}m" if det['height'] is not None else "Height: N/A",
-                    f"Pos: {method_display.get(det['positioning_method'], 'Unknown')}"
+                    f"H: {det['height']:.2f}m" if det['height'] is not None else "H: N/A"
                 ]
                 if is_nearest:
                     dist = math.hypot(det['x']-self.slam_point[0], det['y']-self.slam_point[1])
-                    txt += [f"Dist: {dist:.2f}m", "NEAREST"]
+                    txt += [f"D: {dist:.2f}m", "NEAREST"]
                 draw_text_block(vis, txt, (x1+8, y1+8), 
                               font_scale=0.35, 
                               bg_color=(0,0,0,120), 
                               padding=4, 
                               line_spacing=12)
 
-            # Create expanded canvas with clean header
-            legend_height = 80
-            expanded_vis = np.zeros((vis.shape[0] + legend_height, vis.shape[1], 3), dtype=np.uint8)
+            # Create expanded canvas with modern header
+            header_height = 100
+            expanded_vis = np.zeros((vis.shape[0] + header_height, vis.shape[1], 3), dtype=np.uint8)
+            expanded_vis[header_height:, :] = vis
             
-            # Clean dark header background
-            expanded_vis[:legend_height, :] = [32, 32, 32]  # Clean dark gray
-            
-            # Thin accent line at bottom of header
-            cv2.line(expanded_vis, (0, legend_height-1), (vis.shape[1], legend_height-1), (80, 180, 255), 2)
-            
-            expanded_vis[legend_height:, :] = vis
-            
-            # Clean, organized info display
-            info = [
-                f"SLAM: ({self.slam_point[0]:.2f}, {self.slam_point[1]:.2f})  |  Detected: {len(detection_objects)}  |  Nearest: {nearest_idx if nearest_idx is not None else 'None'}",
-                "Position: Green=Ankle Mid, Yellow=Single Ankle",
-                "          Orange=Nose-Aligned Bottom, Blue=Box Center"
-            ]
-            draw_text_block(expanded_vis, info, (15, 15), 
-                          font_scale=0.5,
-                          text_color=(240, 240, 240),
-                          bg_color=(32, 32, 32, 0),  # Transparent background
-                          padding=0,
-                          line_spacing=18)
+            # Draw the modern header
+            draw_modern_header(expanded_vis, self.slam_point, len(detection_objects), nearest_det, header_height)
             
             vis = expanded_vis
 
