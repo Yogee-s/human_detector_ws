@@ -17,16 +17,17 @@ torch.backends.cudnn.benchmark = True
 
 # === CONFIGURATION ===
 POSE_MODEL_PATH            = '/home/commu/Desktop/human_detector_ws/models/yolo11m-pose.pt'
-FRAME_W, FRAME_H           = 640, 480
+# FRAME_W, FRAME_H           = 640, 480
+FRAME_W, FRAME_H = 1280, 720
 CONF_THRESH                = 0.4
 IOU_THRESH                 = 0.8
 
 # 4-point pixel boundary polygon
 BOUNDARY_POINTS_MAP = np.array([
-    [65, 429],
-    [209, 166],
-    [383, 173],
-    [418, 445],
+    [208, 677],
+    [432, 256],
+    [733, 260],
+    [792, 699],
 ], dtype=np.int32)
 
 # Camera→map transform for SLAM point projection

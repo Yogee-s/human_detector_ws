@@ -5,7 +5,8 @@ import pyrealsense2 as rs
 import time
 
 # Configuration
-FRAME_W, FRAME_H = 640, 480
+# FRAME_W, FRAME_H = 640, 480
+FRAME_W, FRAME_H = 1280, 720
 NUM_POINTS = 4
 
 class BoundarySelector:
