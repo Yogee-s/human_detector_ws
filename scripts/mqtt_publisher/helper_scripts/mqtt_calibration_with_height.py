@@ -1,4 +1,4 @@
-# ─── KABSCH SOLVER WITH 3D HEIGHT MAPPING ──────────────────────────────────
+# ─── KABSCH SOLVER WITH HEIGHT CALIBRATION ──────────────────────────────────
 #!/usr/bin/env python3
 import signal
 import sys
@@ -10,6 +10,8 @@ import paho.mqtt.client as mqtt
 import pyrealsense2 as rs
 import cv2
 from ultralytics import YOLO
+from scipy.optimize import curve_fit
+
 # ─── USER CONFIG ─────────────────────────────────────────────────────────────
 MQTT_USERNAME = "commu"
 MQTT_PASSWORD = "zD5%rZ$m/i+W"
@@ -24,18 +26,20 @@ CONF_THRESH = 0.4
 IOU_THRESH = 0.5
 TRACKER_CFG = "bytetrack.yaml"
 
-# Height configuration
-ROBOT_HEIGHT_IN_MAP = 1.36  # Known height of robot in SLAM map coordinates (meters)
+# Height calibration constants
+ROBOT_REAL_HEIGHT = 1.36  # Robot's actual height in meters (adjust this!)
 
 # GUI Layout constants
-GUI_HEIGHT = 150  # Height for GUI area below video
+GUI_HEIGHT = 200  # Increased height for additional GUI elements
 TOTAL_HEIGHT = FRAME_H + GUI_HEIGHT
 # ───────────────────────────────────────────────────────────────────────────────
 logging.getLogger("ultralytics").setLevel(logging.ERROR)
 
 # ─── GLOBAL STATE ─────────────────────────────────────────────────────────────
-cam_pts = [] # list of np.array([Xc,Yc,Zc]) - now includes height from top of bbox
-map_pts = [] # list of np.array([x_map,y_map,z_map]) - now includes height in map coords
+cam_pts = [] # list of np.array([Xc,Yc,Zc])
+map_pts = [] # list of np.array([x_map,y_map,z_map])
+# Height calibration data
+height_data = [] # list of (distance, pixel_height) tuples
 lock = threading.Lock()
 latest_map = None # last robot pose from MQTT
 target_id = None # locked YOLO track ID
@@ -46,6 +50,13 @@ selection_mode = True # True when selecting ID, False when tracking
 dropdown_active = False # True when dropdown is being shown
 dropdown_options = [] # List of available IDs as strings
 dropdown_selected_idx = 0 # Currently highlighted option in dropdown
+
+# Height calibration function parameters (fitted from data)
+height_params = None  # Will store [a, b] for height = a / distance + b model
+
+def height_model(distance, a, b):
+    """Model: pixel_height = a / distance + b"""
+    return a / distance + b
 
 # ─── GUI HELPER FUNCTIONS ────────────────────────────────────────────────────
 def draw_dropdown(img, x, y, width, height, options, selected_idx, active):
@@ -96,22 +107,12 @@ def draw_buttons(img, tracking_active):
     """Draw control buttons on the image"""
     # Position buttons in the GUI area below dropdown
     gui_start_y = FRAME_H
-    button_y = gui_start_y + 90  # Changed from +80 to +90 to account for dropdown repositioning
+    button_y = gui_start_y + 90
     button_height = 30
     button_width = 120
     
-    # Auto Select button
-    auto_x = 10
-    auto_color = (0, 150, 0) if not tracking_active else (100, 100, 100)
-    cv2.rectangle(img, (auto_x, button_y), (auto_x + button_width, button_y + button_height),
-                 auto_color, -1)
-    cv2.rectangle(img, (auto_x, button_y), (auto_x + button_width, button_y + button_height),
-                 (200, 200, 200), 2)
-    cv2.putText(img, "Auto Select", (auto_x + 10, button_y + 20),
-               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-    
-    # Clear/Stop button
-    clear_x = auto_x + button_width + 10
+    # Clear/Stop button (moved to left position)
+    clear_x = 10
     clear_text = "Stop Track" if tracking_active else "Clear"
     clear_color = (0, 0, 150) if tracking_active else (150, 0, 0)
     cv2.rectangle(img, (clear_x, button_y), (clear_x + button_width, button_y + button_height),
@@ -138,7 +139,7 @@ def handle_mouse_click(event, x, y, flags, param):
         
         # Check dropdown area (positioned in GUI area)
         dropdown_x = 10
-        dropdown_y = gui_start_y + 45  # Updated position
+        dropdown_y = gui_start_y + 45
         dropdown_width, dropdown_height = 200, 30
         
         if (dropdown_x <= x <= dropdown_x + dropdown_width and
@@ -165,34 +166,15 @@ def handle_mouse_click(event, x, y, flags, param):
                     break
         
         # Check buttons (positioned in GUI area with updated coordinates)
-        button_y = gui_start_y + 90  # Updated from +80 to +90
+        button_y = gui_start_y + 90
         button_height = 30
         button_width = 120
         
-        # Auto Select button
-        auto_x = 10
-        if (auto_x <= x <= auto_x + button_width and
-            button_y <= y <= button_y + button_height and selection_mode):
-            auto_select_id()
-        
         # Clear/Stop button
-        clear_x = auto_x + button_width + 10
+        clear_x = 10
         if (clear_x <= x <= clear_x + button_width and
             button_y <= y <= button_y + button_height):
             clear_selection()
-
-def auto_select_id():
-    """Auto-select the most consistently detected ID"""
-    global id_history, selected_id, target_id, selection_mode, dropdown_selected_idx
-    if id_history:
-        best_id = max(id_history.keys(), key=lambda k: id_history[k])
-        selected_id = best_id
-        target_id = best_id
-        selection_mode = False
-        # Update dropdown selection
-        if str(best_id) in dropdown_options:
-            dropdown_selected_idx = dropdown_options.index(str(best_id))
-        print(f"[gui] Auto-selected ID {best_id} for tracking")
 
 def clear_selection():
     """Clear the current selection and return to selection mode"""
@@ -203,73 +185,113 @@ def clear_selection():
     dropdown_active = False
     print("[gui] Cleared ID selection - returning to selection mode")
 
-def get_3d_point_from_bbox(box, depth, intrinsics, depth_scale, use_top=False):
-    """
-    Extract 3D point from bounding box.
-    If use_top=True, uses top-middle of bbox for height measurement.
-    If use_top=False, uses center of bbox (original behavior).
-    """
-    x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+def record_height_calibration():
+    """Record height calibration data point"""
+    global height_data, res, target_id, depth, depth_scale, intrinsics
     
-    if use_top:
-        # Use top-middle of bounding box for height measurement
-        cx = (x1 + x2) // 2
-        cy = y1  # Top of the bounding box
-    else:
-        # Use center of bounding box (original behavior)
-        cx = (x1 + x2) // 2
-        cy = (y1 + y2) // 2
+    if target_id is None:
+        print("[warning] No target ID selected for height calibration")
+        return False
     
-    # Use larger patch for more stable depth reading
-    patch_size = 5
-    patch = depth[max(0, cy - patch_size):cy + patch_size + 1,
-                 max(0, cx - patch_size):cx + patch_size + 1]
+    # Find the current detection
+    for box in res.boxes:
+        cls = int(box.cls[0])
+        if yolo.names.get(cls,"").lower() != "teleco":
+            continue
+        rid = box.id
+        if rid is None:
+            continue
+        tid = int(rid[0])
+        
+        if tid == target_id:
+            x1,y1,x2,y2 = map(int, box.xyxy[0].tolist())
+            
+            # Calculate bounding box height in pixels
+            bbox_height = y2 - y1
+            
+            # Calculate distance to robot (same as before)
+            cx,cy = (x1+x2)//2, (y1+y2)//2
+            patch_size = 5
+            patch = depth[max(0,cy-patch_size):cy+patch_size+1,
+                         max(0,cx-patch_size):cx+patch_size+1]
+            
+            if patch.size:
+                valid_depths = patch[patch > 0]
+                if len(valid_depths) > 0:
+                    z = float(np.median(valid_depths)) * depth_scale
+                    if z > 0:
+                        # Record the height calibration point
+                        height_data.append((z, bbox_height))
+                        print(f"[height_cal] Recorded: distance={z:.3f}m, bbox_height={bbox_height}px")
+                        
+                        # Try to fit the model if we have enough points
+                        if len(height_data) >= 3:
+                            fit_height_model()
+                        return True
     
-    if patch.size:
-        # Use median for stability, but filter out zeros
-        valid_depths = patch[patch > 0]
-        if len(valid_depths) > 0:
-            z = float(np.median(valid_depths)) * depth_scale
-            if z > 0:
-                return np.array(rs.rs2_deproject_pixel_to_point(intrinsics, [cx, cy], z), dtype=float)
+    print("[warning] Could not record height calibration - no valid detection")
+    return False
+
+def fit_height_model():
+    """Fit the height calibration model to recorded data"""
+    global height_params, height_data
     
-    return None
+    if len(height_data) < 3:
+        return
+    
+    try:
+        distances = np.array([d[0] for d in height_data])
+        pixel_heights = np.array([d[1] for d in height_data])
+        
+        # Fit the model: pixel_height = a / distance + b
+        initial_guess = [distances[0] * pixel_heights[0], 0]
+        popt, pcov = curve_fit(height_model, distances, pixel_heights, p0=initial_guess)
+        
+        height_params = popt
+        
+        # Calculate R-squared for goodness of fit
+        predicted = height_model(distances, *popt)
+        ss_res = np.sum((pixel_heights - predicted) ** 2)
+        ss_tot = np.sum((pixel_heights - np.mean(pixel_heights)) ** 2)
+        r_squared = 1 - (ss_res / ss_tot)
+        
+        print(f"[height_model] Fitted parameters: a={popt[0]:.3f}, b={popt[1]:.3f}")
+        print(f"[height_model] R-squared: {r_squared:.4f}")
+        
+    except Exception as e:
+        print(f"[height_model] Failed to fit model: {e}")
+
+def pixel_height_to_real_height(pixel_height, distance):
+    """Convert pixel height to real world height using calibration"""
+    if height_params is None:
+        return None
+    
+    try:
+        # Calculate what the robot's pixel height should be at this distance
+        robot_pixel_height = height_model(distance, *height_params)
+        
+        # Scale the pixel height to real height using the robot as reference
+        real_height = (pixel_height / robot_pixel_height) * ROBOT_REAL_HEIGHT
+        return real_height
+    except:
+        return None
 
 def compute_rigid_transform(cam_pts: np.ndarray, map_pts: np.ndarray) -> np.ndarray:
-    """Compute 3D to 3D rigid transformation using Kabsch algorithm"""
     assert cam_pts.shape == map_pts.shape and cam_pts.shape[0] >= 3
-    assert cam_pts.shape[1] == 3 and map_pts.shape[1] == 3, "Both point sets must be 3D"
-    
-    # Compute centroids
     c_cam = cam_pts.mean(axis=0)
     c_map = map_pts.mean(axis=0)
-    
-    # Center the point sets
     A = cam_pts - c_cam
     B = map_pts - c_map
-    
-    # Compute the cross-covariance matrix
     H = A.T @ B
-    
-    # SVD decomposition
     U, S, Vt = np.linalg.svd(H)
-    
-    # Compute rotation matrix
     R = Vt.T @ U.T
-    
-    # Ensure proper rotation (det(R) = 1)
     if np.linalg.det(R) < 0:
-        Vt[2, :] *= -1
+        Vt[2,:] *= -1
         R = Vt.T @ U.T
-    
-    # Compute translation
     t = c_map - R @ c_cam
-    
-    # Build 4x4 transformation matrix
     T = np.eye(4)
-    T[:3, :3] = R
+    T[:3,:3] = R
     T[:3, 3] = t
-    
     return T
 
 # ─── MQTT CALLBACKS ──────────────────────────────────────────────────────────
@@ -325,24 +347,39 @@ yolo = YOLO(YOLO_MODEL)
 
 # ─── CLEANUP & PRINT TRANSFORM ────────────────────────────────────────────────
 def cleanup_and_exit(sig, frame):
-    print("\n[exit] computing final 3D to 3D transform…")
+    print("\n[exit] computing final transform…")
     pipeline.stop()
     mqttc.loop_stop()
     cv2.destroyAllWindows()
+    
+    # Print position transformation matrix
     if len(cam_pts) >= 3:
         C = np.stack(cam_pts, axis=0)
         M = np.stack(map_pts, axis=0)
         T = compute_rigid_transform(C, M)
-        print("\n# 3D to 3D Transformation Matrix (Camera -> SLAM Map)")
-        print("# This transforms camera 3D coordinates (including height) to SLAM map 3D coordinates")
+        print("\n# Position Transformation Matrix (Camera to Map coordinates)")
         print("T_MAP_CAM = np.array([")
         for row in T:
             print("  [{: .8f}, {: .8f}, {: .8f}, {: .8f}],".format(*row))
         print("], dtype=float)")
-        print(f"\n# Calibrated with {len(cam_pts)} point pairs")
-        print("# Usage: map_point_3d = T_MAP_CAM @ np.append(cam_point_3d, 1)[:3]")
     else:
-        print(f"need ≥3 points, got {len(cam_pts)}")
+        print(f"need ≥3 points for position transform, got {len(cam_pts)}")
+    
+    # Print height calibration parameters
+    if height_params is not None:
+        print(f"\n# Height Calibration Parameters")
+        print(f"# Model: pixel_height = a / distance + b")
+        print(f"HEIGHT_PARAMS = [{height_params[0]:.8f}, {height_params[1]:.8f}]")
+        print(f"ROBOT_REAL_HEIGHT = {ROBOT_REAL_HEIGHT:.3f}  # meters")
+        print(f"\n# Usage example:")
+        print(f"# robot_pixel_height = HEIGHT_PARAMS[0] / distance + HEIGHT_PARAMS[1]")
+        print(f"# real_height = (measured_pixel_height / robot_pixel_height) * ROBOT_REAL_HEIGHT")
+        print(f"\n# Height calibration data points: {len(height_data)}")
+        for i, (dist, pix_h) in enumerate(height_data):
+            print(f"#   {i+1}: distance={dist:.3f}m, pixel_height={pix_h}px")
+    else:
+        print(f"\n# No height calibration data collected (need ≥3 points, got {len(height_data)})")
+    
     sys.exit(0)
 
 signal.signal(signal.SIGINT, cleanup_and_exit)
@@ -351,15 +388,15 @@ signal.signal(signal.SIGTERM, cleanup_and_exit)
 # ─── MAIN LOOP ────────────────────────────────────────────────────────────────
 cv2.namedWindow("calib", cv2.WINDOW_NORMAL)
 cv2.setMouseCallback("calib", handle_mouse_click)
-print("** 3D Height Calibration running **")
+print("** Calibration running **")
 print(" - Use dropdown below video to select a Teleco ID to track")
-print(" - Use 'Auto Select' to choose the most stable ID")
-print(" - Hit [SPACE] to record a 3D pair when tracking")
-print(" - Height is measured from top of bounding box")
-print(f" - Robot height in map coordinates: {ROBOT_HEIGHT_IN_MAP}m")
-print(" - Press Ctrl+C or Esc to finish & compute the 3D transform\n")
+print(" - Hit [SPACE] to record a position pair AND height calibration point when tracking")
+print(f" - Robot real height set to: {ROBOT_REAL_HEIGHT}m (adjust ROBOT_REAL_HEIGHT if needed)")
+print(" - Press Ctrl+C or Esc to finish & compute transforms\n")
 
 frame_count = 0
+res = None  # Make res accessible globally for height calibration
+
 while True:
     frames = pipeline.wait_for_frames()
     aligned = align.process(frames)
@@ -434,11 +471,6 @@ while True:
             thickness = 2
             cv2.rectangle(img, (x1,y1),(x2,y2), color, thickness)
             
-            # Draw line at top-middle to show height measurement point
-            cx = (x1 + x2) // 2
-            cv2.line(img, (cx - 10, y1), (cx + 10, y1), (0, 255, 255), 2)
-            cv2.circle(img, (cx, y1), 3, (0, 255, 255), -1)
-            
             # ID label with background
             label = f"ID {tid}"
             label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
@@ -475,13 +507,6 @@ while True:
                 thickness = 3
                 cv2.rectangle(img, (x1,y1),(x2,y2), color, thickness)
                 
-                # Draw line at top-middle to show height measurement point
-                cx = (x1 + x2) // 2
-                cv2.line(img, (cx - 15, y1), (cx + 15, y1), (0, 255, 255), 3)
-                cv2.circle(img, (cx, y1), 4, (0, 255, 255), -1)
-                cv2.putText(img, "HEIGHT", (cx - 30, y1 - 10),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
-                
                 # ID label with background
                 label = f"ID {tid}"
                 label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
@@ -489,9 +514,27 @@ while True:
                 cv2.putText(img, label, (x1+2, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
                 cv2.putText(img, "TRACKING", (x1, y2+20),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
+                
+                # Show bounding box height and estimated real height
+                bbox_height = y2 - y1
+                cx,cy = (x1+x2)//2, (y1+y2)//2
+                patch_size = 5
+                patch = depth[max(0,cy-patch_size):cy+patch_size+1,
+                             max(0,cx-patch_size):cx+patch_size+1]
+                if patch.size:
+                    valid_depths = patch[patch > 0]
+                    if len(valid_depths) > 0:
+                        z = float(np.median(valid_depths)) * depth_scale
+                        if z > 0:
+                            estimated_height = pixel_height_to_real_height(bbox_height, z)
+                            height_text = f"H:{bbox_height}px"
+                            if estimated_height is not None:
+                                height_text += f" ({estimated_height:.2f}m)"
+                            cv2.putText(img, height_text, (x1, y1-30),
+                                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255,255,0), 1)
                 break
     
-    # Compute current cam_pt (using top of bounding box for height)
+    # Compute current cam_pt
     cam_pt = None
     if target_id is not None and not selection_mode:
         for box in res.boxes:
@@ -503,7 +546,20 @@ while True:
                 continue
             tid = int(rid[0])
             if tid == target_id:
-                cam_pt = get_3d_point_from_bbox(box, depth, intrinsics, depth_scale, use_top=True)
+                x1,y1,x2,y2 = map(int, box.xyxy[0].tolist())
+                cx,cy = (x1+x2)//2, (y1+y2)//2
+                
+                # Use larger patch for more stable depth reading
+                patch_size = 5
+                patch = depth[max(0,cy-patch_size):cy+patch_size+1,
+                             max(0,cx-patch_size):cx+patch_size+1]
+                if patch.size:
+                    # Use median for stability, but filter out zeros
+                    valid_depths = patch[patch > 0]
+                    if len(valid_depths) > 0:
+                        z = float(np.median(valid_depths)) * depth_scale
+                        if z > 0:
+                            cam_pt = rs.rs2_deproject_pixel_to_point(intrinsics, [cx,cy], z)
                 break
     
     with lock:
@@ -521,7 +577,7 @@ while True:
         status_text = "MODE: Selection - Choose an ID to track"
         status_color = (0, 255, 255)
     else:
-        status_text = f"MODE: Tracking ID {target_id} (3D Height)"
+        status_text = f"MODE: Tracking ID {target_id}"
         status_color = (0, 255, 0)
     cv2.putText(img, status_text, (10, status_y),
                cv2.FONT_HERSHEY_SIMPLEX, 0.6, status_color, 2)
@@ -542,44 +598,54 @@ while True:
     fg = (255,255,255)
     spacing = 12
     
-    # Camera coordinates (3D with height from top of bbox)
+    # Camera coordinates
     if cam_pt is None:
         txt1 = "Cam: Waiting for detection..."
     else:
-        txt1 = f"Cam: X:{cam_pt[0]:.2f} Y:{cam_pt[1]:.2f} Z:{cam_pt[2]:.2f} (top)"
+        txt1 = f"Cam: X:{cam_pt[0]:.2f} Y:{cam_pt[1]:.2f} Z:{cam_pt[2]:.2f}"
     (w1,h1),_ = cv2.getTextSize(txt1, font, fs, th)
     cv2.rectangle(img, (x0-4, y-h1-4), (x0+w1+4, y+4), bg, -1)
     cv2.putText(img, txt1, (x0, y), font, fs, fg, th)
     
-    # Robot coordinates (now 3D with height)
+    # Robot coordinates
     y += h1 + spacing
     if rob_pt is None:
         txt2 = "Rob: Waiting for MQTT data..."
     else:
-        # For calibration, we assume the robot height is known and constant
-        rob_3d = np.array([rob_pt[0], rob_pt[1], ROBOT_HEIGHT_IN_MAP])
-        txt2 = f"Rob: X:{rob_3d[0]:.2f} Y:{rob_3d[1]:.2f} Z:{rob_3d[2]:.2f} (fixed)"
+        txt2 = f"Rob: X:{rob_pt[0]:.2f} Y:{rob_pt[1]:.2f} Z:{rob_pt[2]:.2f}"
     (w2,h2),_ = cv2.getTextSize(txt2, font, fs, th)
     cv2.rectangle(img, (x0-4, y-h2-4), (x0+w2+4, y+4), bg, -1)
     cv2.putText(img, txt2, (x0, y), font, fs, fg, th)
     
     # Pairs recorded
     y += h2 + spacing
-    txt3 = f"3D Pairs recorded: {len(cam_pts)}"
+
+    # Pairs recorded (complete the incomplete line)
+    txt3 = f"Pairs recorded: {len(cam_pts)}"
     (w3,h3),_ = cv2.getTextSize(txt3, font, fs, th)
     cv2.rectangle(img, (x0-4, y-h3-4), (x0+w3+4, y+4), bg, -1)
     cv2.putText(img, txt3, (x0, y), font, fs, fg, th)
+    
+    # Height calibration info
+    y += h3 + spacing
+    if height_params is not None:
+        txt4 = f"Height model: a={height_params[0]:.1f}, b={height_params[1]:.1f}"
+    else:
+        txt4 = f"Height cal points: {len(height_data)}"
+    (w4,h4),_ = cv2.getTextSize(txt4, font, fs, th)
+    cv2.rectangle(img, (x0-4, y-h4-4), (x0+w4+4, y+4), bg, -1)
+    cv2.putText(img, txt4, (x0, y), font, fs, fg, th)
     
     cv2.imshow("calib", img)
     
     key = cv2.waitKey(1) & 0xFF
     
-    # SPACE = record one 3D pair (only works when tracking)
+    # SPACE = record one pair (only works when tracking)
     if key == ord(' '):
         if selection_mode or target_id is None:
             print("[warning] Please select a Teleco ID first")
         else:
-            print(f"[input] SPACE pressed - attempting to record 3D pair for ID {target_id}")
+            print(f"[input] SPACE pressed - attempting to record pair for ID {target_id}")
             picked = None
             for box in res.boxes:
                 cls = int(box.cls[0])
@@ -590,23 +656,35 @@ while True:
                     continue
                 tid = int(rid[0])
                 if tid == target_id:
-                    cam_3d = get_3d_point_from_bbox(box, depth, intrinsics, depth_scale, use_top=True)
-                    if cam_3d is not None:
-                        picked = (tid, cam_3d)
+                    x1,y1,x2,y2 = map(int, box.xyxy[0].tolist())
+                    cx,cy = (x1+x2)//2, (y1+y2)//2
+                    patch_size = 5
+                    patch = depth[max(0,cy-patch_size):cy+patch_size+1,
+                                 max(0,cx-patch_size):cx+patch_size+1]
+                    if patch.size:
+                        valid_depths = patch[patch > 0]
+                        if len(valid_depths) > 0:
+                            z = float(np.median(valid_depths)) * depth_scale
+                            if z > 0:
+                                picked = (tid, np.array(
+                                    rs.rs2_deproject_pixel_to_point(intrinsics, [cx,cy], z),
+                                    dtype=float))
                     break
             
             with lock:
                 if picked and latest_map is not None:
-                    tid, cam_3d = picked
-                    # Create 3D map point with known robot height
-                    map_3d = np.array([latest_map[0], latest_map[1], ROBOT_HEIGHT_IN_MAP], dtype=float)
-                    cam_pts.append(cam_3d)
-                    map_pts.append(map_3d)
-                    print(f"[recorded] 3D pair #{len(cam_pts)}: cam {cam_3d.round(3)} ↔ map {map_3d.round(3)}")
+                    tid, cam3 = picked
+                    mp_copy = latest_map.copy()
+                    cam_pts.append(cam3)
+                    map_pts.append(mp_copy)
+                    print(f"[recorded] pair #{len(cam_pts)}: cam {cam3.round(3)} ↔ map {mp_copy.round(3)}")
+                    
+                    # Also record height calibration point when recording position
+                    record_height_calibration()
                 else:
                     print("[warning] skipped—no detection or no robot pose")
     
-    # ESC = exit + compute transform
+    # ESC = exit + compute
     if key == 27:
         cleanup_and_exit(None, None)
     

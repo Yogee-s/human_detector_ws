@@ -30,15 +30,21 @@ BOUNDARY_POINTS_MAP = np.array([
     [792, 699],
 ], dtype=np.int32)
 
-# NEW 3D-to-3D transformation matrix from Kabsch calibration
-# Replace this with your actual calibrated matrix from the second script
+# === NEW TWO-MATRIX CALIBRATION SYSTEM ===
+# 1. Position transformation matrix (Camera→map transform for SLAM point projection)
 T_MAP_CAM = np.array([
-  [-0.32567945,  0.87583040,  0.35616570, -1.07191809],
-  [ 0.92533681,  0.21791592,  0.31026511, -0.56075412],
-  [ 0.19412544,  0.43062021, -0.88140884,  5.52776705],
+  [-0.30520434,  0.55566699, -0.77335924,  2.06314877],
+  [ 0.95208065,  0.16114999, -0.25994830,  1.09149810],
+  [-0.01981786, -0.81563771, -0.57822346,  1.50934166],
   [ 0.00000000,  0.00000000,  0.00000000,  1.00000000],
 ], dtype=float)
 
+
+
+# 2. Height calibration parameters
+# TODO: Replace these with your actual calibration results
+HEIGHT_PARAMS = [627.50804828, 85.43821047]
+ROBOT_REAL_HEIGHT = 1.360  # meters
 
 DEFAULT_SLAM_POINT         = (-0.9, 0.0)
 SLAM_POINT_VERTICAL_OFFSET = 0.2  # meters
@@ -69,6 +75,34 @@ def map_to_pixel(map_point, transform_matrix, intrinsics):
         pass
     return None
 
+def pixel_height_to_real_height(measured_pixel_height, distance_to_object):
+    """
+    Convert pixel height to real world height using calibration parameters
+    
+    Args:
+        measured_pixel_height: Height in pixels (e.g., from pose keypoints)
+        distance_to_object: Distance to the object in meters (from depth camera)
+    
+    Returns:
+        Estimated real height in meters
+    """
+    if distance_to_object <= 0:
+        return None
+        
+    try:
+        # Calculate what the robot's pixel height would be at this distance
+        robot_pixel_height = HEIGHT_PARAMS[0] / distance_to_object + HEIGHT_PARAMS[1]
+        
+        if robot_pixel_height <= 0:
+            return None
+            
+        # Scale the measured pixel height using robot as reference
+        real_height = (measured_pixel_height / robot_pixel_height) * ROBOT_REAL_HEIGHT
+        
+        return real_height if real_height > 0 else None
+    except (ZeroDivisionError, ValueError):
+        return None
+
 def parse_slam_point(args):
     if len(args) >= 3:
         try:
@@ -85,80 +119,96 @@ class PoseHeightDetector:
         self.LEFT_ANKLE_IDX  = 15
         self.RIGHT_ANKLE_IDX = 16
 
-    def calculate_nose_height_3d_new(self, keypoints, depth_image, depth_intrinsics, depth_scale, transform_matrix):
+    def get_ankle_midpoint(self, keypoints):
+        """Get the midpoint between left and right ankles, with fallback options"""
+        left_ankle = keypoints[self.LEFT_ANKLE_IDX]
+        right_ankle = keypoints[self.RIGHT_ANKLE_IDX]
+        
+        # Check if both ankles are detected with good confidence
+        left_valid = len(left_ankle) >= 3 and left_ankle[2] > 0.5
+        right_valid = len(right_ankle) >= 3 and right_ankle[2] > 0.5
+        
+        if left_valid and right_valid:
+            # Both ankles detected - use midpoint
+            mid_x = (left_ankle[0] + right_ankle[0]) / 2
+            mid_y = (left_ankle[1] + right_ankle[1]) / 2
+            return int(mid_x), int(mid_y), "both_ankles"
+        elif left_valid:
+            # Only left ankle detected
+            return int(left_ankle[0]), int(left_ankle[1]), "left_ankle"
+        elif right_valid:
+            # Only right ankle detected
+            return int(right_ankle[0]), int(right_ankle[1]), "right_ankle"
+        else:
+            # No ankles detected - return None
+            return None, None, "no_ankles"
+
+    def get_nose_aligned_bottom_fallback(self, keypoints, bounding_box):
+        """Get nose-aligned bottom middle of bounding box as fallback position"""
+        nose = keypoints[self.NOSE_IDX]
+        x1, y1, x2, y2 = bounding_box
+        
+        # Check if nose is detected with good confidence
+        if len(nose) >= 3 and nose[2] > 0.5:
+            # Use nose X coordinate aligned with bottom of bounding box
+            cx = int(nose[0])
+            cy = y2 - 20  # Bottom of box minus 20 pixels
+            return cx, cy, "nose_aligned_bottom"
+        else:
+            # Final fallback to center of box
+            cx = (x1 + x2) // 2
+            cy = y2 - 20
+            return cx, cy, "box_center"
+
+    def calculate_height_from_pose_keypoints(self, keypoints, distance_to_person):
         """
-        Calculate nose height using the new 3D transformation matrix.
-        This method transforms the nose point to map coordinates and calculates height there.
+        Calculate height using pose keypoints and the new calibration system
+        
+        Args:
+            keypoints: YOLO pose keypoints
+            distance_to_person: Distance to person in meters
+            
+        Returns:
+            Estimated height in meters or None
         """
         nose = keypoints[self.NOSE_IDX]
+        left_ankle = keypoints[self.LEFT_ANKLE_IDX]
+        right_ankle = keypoints[self.RIGHT_ANKLE_IDX]
+        
+        # Check if nose is detected with good confidence
         if len(nose) < 3 or nose[2] < 0.5:
             return None
+            
+        nose_x, nose_y = int(nose[0]), int(nose[1])
         
-        nx, ny = int(nose[0]), int(nose[1])
-        nd = self._get_depth_at_point(depth_image, nx, ny) * depth_scale
-        if nd <= 0:
+        # Try to get ankle position for height calculation
+        ankle_x = ankle_y = None
+        
+        # Check if both ankles are detected
+        left_valid = len(left_ankle) >= 3 and left_ankle[2] > 0.5
+        right_valid = len(right_ankle) >= 3 and right_ankle[2] > 0.5
+        
+        if left_valid and right_valid:
+            # Both ankles detected - use midpoint
+            ankle_x = (left_ankle[0] + right_ankle[0]) / 2
+            ankle_y = (left_ankle[1] + right_ankle[1]) / 2
+        elif left_valid:
+            # Only left ankle detected
+            ankle_x, ankle_y = left_ankle[0], left_ankle[1]
+        elif right_valid:
+            # Only right ankle detected
+            ankle_x, ankle_y = right_ankle[0], right_ankle[1]
+        else:
+            # No ankles detected - cannot calculate height
             return None
+            
+        # Calculate pixel height (nose to ankle)
+        pixel_height = abs(ankle_y - nose_y)
         
-        # Get 3D nose point in camera coordinates
-        nose_3d_cam = rs.rs2_deproject_pixel_to_point(depth_intrinsics, [nx, ny], nd)
+        # Convert to real height using calibration
+        real_height = pixel_height_to_real_height(pixel_height, distance_to_person)
         
-        # Transform nose to map coordinates using new transformation matrix
-        nose_hom = np.array([nose_3d_cam[0], nose_3d_cam[1], nose_3d_cam[2], 1.0])
-        nose_3d_map = transform_matrix @ nose_hom
-        nose_map_coords = nose_3d_map[:3]  # Extract x, y, z
-        
-        # Get ankle points and transform them to map coordinates for ground reference
-        ground_pts_map = []
-        for idx in (self.LEFT_ANKLE_IDX, self.RIGHT_ANKLE_IDX):
-            kp = keypoints[idx]
-            if len(kp) >= 3 and kp[2] > 0.5:
-                ax, ay = int(kp[0]), int(kp[1])
-                ad = self._get_depth_at_point(depth_image, ax, ay) * depth_scale
-                if ad > 0:
-                    # Get 3D ankle point in camera coordinates
-                    ankle_3d_cam = rs.rs2_deproject_pixel_to_point(depth_intrinsics, [ax, ay], ad)
-                    # Transform to map coordinates
-                    ankle_hom = np.array([ankle_3d_cam[0], ankle_3d_cam[1], ankle_3d_cam[2], 1.0])
-                    ankle_3d_map = transform_matrix @ ankle_hom
-                    ground_pts_map.append(ankle_3d_map[:3])
-
-        if not ground_pts_map:
-            return None
-        
-        # Calculate average ground height in map coordinates
-        avg_ground_z_map = sum(p[2] for p in ground_pts_map) / len(ground_pts_map)
-        
-        # Height is the difference in Z coordinates in map space
-        height = nose_map_coords[2] - avg_ground_z_map
-        return height if height > 0 else None
-
-    def calculate_nose_height_3d(self, keypoints, depth_image, depth_intrinsics, depth_scale):
-        """
-        Original height calculation method (kept for fallback)
-        """
-        nose = keypoints[self.NOSE_IDX]
-        if len(nose) < 3 or nose[2] < 0.5:
-            return None
-        nx, ny = int(nose[0]), int(nose[1])
-        nd = self._get_depth_at_point(depth_image, nx, ny) * depth_scale
-        if nd <= 0:
-            return None
-        nose_3d = rs.rs2_deproject_pixel_to_point(depth_intrinsics, [nx, ny], nd)
-
-        ground_pts = []
-        for idx in (self.LEFT_ANKLE_IDX, self.RIGHT_ANKLE_IDX):
-            kp = keypoints[idx]
-            if len(kp) >= 3 and kp[2] > 0.5:
-                ax, ay = int(kp[0]), int(kp[1])
-                ad = self._get_depth_at_point(depth_image, ax, ay) * depth_scale
-                if ad > 0:
-                    ground_pts.append(rs.rs2_deproject_pixel_to_point(depth_intrinsics, [ax, ay], ad))
-
-        if not ground_pts:
-            return None
-        avg_ground_y = sum(p[1] for p in ground_pts) / len(ground_pts)
-        height = avg_ground_y - nose_3d[1]
-        return height if height > 0 else None
+        return real_height
 
     def _get_depth_at_point(self, depth_image, x, y, patch_size=5):
         half = patch_size // 2
@@ -196,10 +246,109 @@ def draw_text_block(img, lines, pos, font=cv2.FONT_HERSHEY_SIMPLEX,
         cv2.putText(img, t, (x, cy), font, font_scale, text_color, thickness)
         cy += line_spacing
 
+def draw_modern_header(img, slam_point, detection_count, nearest_person, header_height=100):
+    """Draw a modern, aesthetic header with key information"""
+    width = img.shape[1]
+    
+    # Create gradient background
+    overlay = img.copy()
+    for i in range(header_height):
+        alpha = 0.95 - (i / header_height) * 0.3  # Gradient fade
+        color_intensity = int(25 + (i / header_height) * 15)  # Slight gradient
+        cv2.line(overlay, (0, i), (width, i), (color_intensity, color_intensity, color_intensity), 1)
+    
+    # Blend overlay
+    cv2.addWeighted(overlay, 0.9, img, 0.1, 0, img)
+    
+    # Add subtle accent line at bottom
+    cv2.line(img, (0, header_height-2), (width, header_height-2), (70, 170, 255), 3)
+    
+    # Left side - SLAM info, detection count, and position method
+    slam_text = f"SLAM: ({slam_point[0]:.1f}, {slam_point[1]:.1f})"
+    cv2.putText(img, slam_text, (20, 30), cv2.FONT_HERSHEY_DUPLEX, 0.7, (255, 255, 255), 2)
+    
+    detect_text = f"Detected: {detection_count}"
+    cv2.putText(img, detect_text, (20, 55), cv2.FONT_HERSHEY_DUPLEX, 0.6, (180, 255, 180), 2)
+    
+    # Position method for nearest person - more prominent
+    if nearest_person:
+        method_display = {
+            "both_ankles": "Both Ankles",
+            "left_ankle": "Left Ankle", 
+            "right_ankle": "Right Ankle",
+            "nose_aligned_bottom": "Nose-Bottom",
+            "box_center": "Box Center"
+        }
+        method_text = f"Method: {method_display.get(nearest_person['positioning_method'], 'Unknown')}"
+        cv2.putText(img, method_text, (20, 80), cv2.FONT_HERSHEY_DUPLEX, 0.65, (255, 255, 100), 2)
+    
+    # Right side - Height and Distance display (single line format)
+    if nearest_person and nearest_person.get('height') is not None:
+        height_m = nearest_person['height']
+        height_text = f"Height: {height_m:.2f}m"
+        
+        # Calculate distance
+        dist = math.hypot(nearest_person['x'] - slam_point[0], nearest_person['y'] - slam_point[1])
+        dist_text = f"Distance: {dist:.1f}m"
+        
+        # Calculate sizes for longer boxes with larger text
+        height_text_size = cv2.getTextSize(height_text, cv2.FONT_HERSHEY_DUPLEX, 1.2, 3)[0]
+        height_box_width = height_text_size[0] + 30
+        height_box_height = 50
+        
+        dist_text_size = cv2.getTextSize(dist_text, cv2.FONT_HERSHEY_DUPLEX, 1.2, 3)[0]
+        dist_box_width = dist_text_size[0] + 30
+        dist_box_height = 50
+        
+        # Position boxes side by side
+        spacing = 15
+        total_width = height_box_width + spacing + dist_box_width
+        start_x = width - total_width - 20
+        box_y = 25
+        
+        # Height box
+        height_box_x = start_x
+        overlay = img.copy()
+        cv2.rectangle(overlay, (height_box_x, box_y), (height_box_x + height_box_width, box_y + height_box_height), (0, 150, 255), -1)
+        cv2.addWeighted(overlay, 0.8, img, 0.2, 0, img)
+        cv2.rectangle(img, (height_box_x, box_y), (height_box_x + height_box_width, box_y + height_box_height), (100, 200, 255), 2)
+        
+        # Height text (single line with black labels)
+        label_size = cv2.getTextSize("Height:", cv2.FONT_HERSHEY_DUPLEX, 1.2, 3)[0]
+        # Draw label in black
+        cv2.putText(img, "Height:", (height_box_x + 10, box_y + 32), cv2.FONT_HERSHEY_DUPLEX, 1.2, (0, 0, 0), 3)
+        # Draw value part in bright white
+        value_x = height_box_x + 10 + label_size[0] + 8
+        cv2.putText(img, f"{height_m:.2f}m", (value_x, box_y + 32), cv2.FONT_HERSHEY_DUPLEX, 1.2, (255, 255, 255), 3)
+        
+        # Distance box - back to original darker color
+        dist_box_x = height_box_x + height_box_width + spacing
+        overlay = img.copy()
+        cv2.rectangle(overlay, (dist_box_x, box_y), (dist_box_x + dist_box_width, box_y + dist_box_height), (255, 150, 0), -1)
+        cv2.addWeighted(overlay, 0.8, img, 0.2, 0, img)
+        cv2.rectangle(img, (dist_box_x, box_y), (dist_box_x + dist_box_width, box_y + dist_box_height), (255, 200, 100), 2)
+        
+        # Distance text (single line with black labels)
+        dist_label_size = cv2.getTextSize("Distance:", cv2.FONT_HERSHEY_DUPLEX, 1.2, 3)[0]
+        # Draw label in black
+        cv2.putText(img, "Distance:", (dist_box_x + 10, box_y + 32), cv2.FONT_HERSHEY_DUPLEX, 1.2, (0, 0, 0), 3)
+        # Draw value part in bright white
+        dist_value_x = dist_box_x + 10 + dist_label_size[0] + 8
+        cv2.putText(img, f"{dist:.1f}m", (dist_value_x, box_y + 32), cv2.FONT_HERSHEY_DUPLEX, 1.2, (255, 255, 255), 3)
+        
+    else:
+        # No height/distance available
+        no_data_text = "No Person Data"
+        text_size = cv2.getTextSize(no_data_text, cv2.FONT_HERSHEY_DUPLEX, 0.8, 2)[0]
+        text_x = width - text_size[0] - 20
+        cv2.putText(img, no_data_text, (text_x, 50), cv2.FONT_HERSHEY_DUPLEX, 0.8, (150, 150, 150), 2)
+
 class HumanPublisher:
     def __init__(self, slam_point):
         self.slam_point = slam_point
         print(f"Target SLAM point: ({slam_point[0]:.2f}, {slam_point[1]:.2f})")
+        print(f"Height calibration parameters: a={HEIGHT_PARAMS[0]:.3f}, b={HEIGHT_PARAMS[1]:.3f}")
+        print(f"Robot reference height: {ROBOT_REAL_HEIGHT:.2f}m")
 
         # MQTT
         self.mqtt = MQTT()
@@ -283,20 +432,34 @@ class HumanPublisher:
 
     def calculate_height_from_keypoints(self, kps, depth):
         """
-        Calculate height using the new 3D transformation method
+        Calculate height using the new calibration system
+        This method now uses pixel-based height calculation with calibrated parameters
         """
-        # Try the new method first
-        height_new = self.pose_detector.calculate_nose_height_3d_new(
-            kps, depth, self.intr, self.depth_scale, T_MAP_CAM
-        )
+        # Get the person's position for distance calculation
+        # Use ankle midpoint if available, otherwise use fallback
+        ankle_x, ankle_y, _ = self.pose_detector.get_ankle_midpoint(kps)
         
-        if height_new is not None:
-            return height_new
+        if ankle_x is None:
+            # Use nose-aligned bottom as fallback for distance calculation
+            nose = kps[self.pose_detector.NOSE_IDX]
+            if len(nose) >= 3 and nose[2] > 0.5:
+                ankle_x, ankle_y = int(nose[0]), int(nose[1])
+            else:
+                return None
         
-        # Fallback to original method if new method fails
-        return self.pose_detector.calculate_nose_height_3d(
-            kps, depth, self.intr, self.depth_scale
-        )
+        # Get depth at the person's location
+        patch = depth[max(0, ankle_y-3):ankle_y+4, max(0, ankle_x-3):ankle_x+4]
+        if patch.size == 0:
+            return None
+        distance_to_person = float(np.median(patch)) * self.depth_scale
+        
+        if distance_to_person <= 0:
+            return None
+        
+        # Calculate height using pose keypoints and new calibration system
+        height = self.pose_detector.calculate_height_from_pose_keypoints(kps, distance_to_person)
+        
+        return height
 
     def inference_loop(self):
         cv2.namedWindow("Detections", cv2.WINDOW_NORMAL)
@@ -317,7 +480,7 @@ class HumanPublisher:
 
             res = self.model.predict(
                 img, conf=CONF_THRESH, iou=IOU_THRESH,
-                classes=[0]
+                classes=[0], verbose=False
             )[0]
 
             detection_objects = []
@@ -330,16 +493,15 @@ class HumanPublisher:
                     x1, y1, x2, y2 = map(int, box[:4])
                     conf = float(box[4])
 
-                    # Get nose keypoint for x-coordinate
-                    nose_kp = kps[self.pose_detector.NOSE_IDX]
-                    if len(nose_kp) >= 3 and nose_kp[2] > 0.5:
-                        # Use nose x-coordinate, but keep offset from bottom of box
-                        cx = int(nose_kp[0])
-                        cy = y2 - 20
+                    # Get ankle midpoint for better positioning
+                    ankle_x, ankle_y, ankle_method = self.pose_detector.get_ankle_midpoint(kps)
+                    
+                    if ankle_x is None:
+                        # Use nose-aligned bottom middle of bounding box as fallback
+                        cx, cy, positioning_method = self.pose_detector.get_nose_aligned_bottom_fallback(kps, (x1, y1, x2, y2))
                     else:
-                        # Fallback to center of box if nose not detected
-                        cx = (x1+x2)//2
-                        cy = y2 - 20
+                        cx, cy = ankle_x, ankle_y
+                        positioning_method = ankle_method
 
                     if not point_in_polygon((cx,cy), self.boundary_points):
                         continue
@@ -355,6 +517,7 @@ class HumanPublisher:
                     P = T_MAP_CAM @ np.array([Xc, Yc, z, 1.0], float)
                     Xm, Ym = float(P[0]), float(P[1])
 
+                    # Use new height calculation method
                     height = self.calculate_height_from_keypoints(kps, depth)
 
                     detection_objects.append({
@@ -363,7 +526,8 @@ class HumanPublisher:
                         'confidence': conf,
                         'box': [x1, y1, x2, y2],
                         'keypoints': kps,
-                        'bottom_center': (cx, cy)
+                        'bottom_center': (cx, cy),
+                        'positioning_method': positioning_method
                     })
 
             nearest_det, nearest_idx = self.find_nearest_person(detection_objects)
@@ -375,52 +539,76 @@ class HumanPublisher:
 
                 cv2.rectangle(vis, (x1,y1), (x2,y2), color, thickness)
                 cx, cy = det['bottom_center']
-                cv2.circle(vis, (cx,cy), 4, (255,0,0), -1)
+                
+                # Different colors and styles for different positioning methods
+                if det['positioning_method'] == "both_ankles":
+                    circle_color = (0,255,0)  # Green for both ankles
+                    circle_size = 6
+                    outline_size = 8
+                elif det['positioning_method'] in ["left_ankle", "right_ankle"]:
+                    circle_color = (0,255,255)  # Yellow for single ankle
+                    circle_size = 5
+                    outline_size = 7
+                elif det['positioning_method'] == "nose_aligned_bottom":
+                    circle_color = (255,128,0)  # Orange for nose-aligned bottom
+                    circle_size = 5
+                    outline_size = 7
+                else:
+                    circle_color = (255,0,0)  # Blue for box center
+                    circle_size = 4
+                    outline_size = 6
+                
+                cv2.circle(vis, (cx,cy), circle_size, circle_color, -1)
+                cv2.circle(vis, (cx,cy), outline_size, (255,255,255), 2)  # White outline
+                
+                # Add position indicator text
+                pos_text = ""
+                if det['positioning_method'] == "both_ankles":
+                    pos_text = "MID"
+                elif det['positioning_method'] == "left_ankle":
+                    pos_text = "L"
+                elif det['positioning_method'] == "right_ankle":
+                    pos_text = "R"
+                elif det['positioning_method'] == "nose_aligned_bottom":
+                    pos_text = "NAB"
+                else:
+                    pos_text = "B"
+                    
+                cv2.putText(vis, pos_text, (cx-12, cy-12), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255,255,255), 2)
 
+                # Draw keypoints with special highlighting for ankles and nose
                 for j,(kx,ky,kc) in enumerate(det['keypoints']):
                     if kc > 0.5:
-                        kcolor = (0,0,255) if j == self.pose_detector.NOSE_IDX else (0,255,0)
+                        if j == self.pose_detector.NOSE_IDX:
+                            kcolor = (0,0,255)  # Red for nose
+                        elif j in [self.pose_detector.LEFT_ANKLE_IDX, self.pose_detector.RIGHT_ANKLE_IDX]:
+                            kcolor = (0,255,0)  # Green for ankles
+                        else:
+                            kcolor = (0,255,255)  # Yellow for other keypoints
                         cv2.circle(vis, (int(kx),int(ky)), 3, kcolor, -1)
-
+   
+                # Enhanced text information (more compact)
                 txt = [
                     f"Conf: {det['confidence']:.2f}",
-                    f"Height: {det['height']:.2f}m" if det['height'] is not None else "Height: N/A"
+                    f"H: {det['height']:.2f}m" if det['height'] is not None else "H: N/A"
                 ]
                 if is_nearest:
                     dist = math.hypot(det['x']-self.slam_point[0], det['y']-self.slam_point[1])
-                    txt += [f"Dist: {dist:.2f}m", "NEAREST"]
+                    txt += [f"D: {dist:.2f}m", "NEAREST"]
                 draw_text_block(vis, txt, (x1+8, y1+8), 
                               font_scale=0.35, 
                               bg_color=(0,0,0,120), 
                               padding=4, 
                               line_spacing=12)
 
-            # Create expanded canvas with clean header
-            legend_height = 120  # Increased height for new info
-            expanded_vis = np.zeros((vis.shape[0] + legend_height, vis.shape[1], 3), dtype=np.uint8)
+            # Create expanded canvas with modern header
+            header_height = 100
+            expanded_vis = np.zeros((vis.shape[0] + header_height, vis.shape[1], 3), dtype=np.uint8)
+            expanded_vis[header_height:, :] = vis
             
-            # Clean dark header background
-            expanded_vis[:legend_height, :] = [32, 32, 32]  # Clean dark gray
-            
-            # Thin accent line at bottom of header
-            cv2.line(expanded_vis, (0, legend_height-1), (vis.shape[1], legend_height-1), (80, 180, 255), 2)
-            
-            expanded_vis[legend_height:, :] = vis
-            
-            # Clean, organized info display
-            info = [
-                f"SLAM: ({self.slam_point[0]:.2f}, {self.slam_point[1]:.2f})  |  Detected: {len(detection_objects)}  |  Nearest: {nearest_idx if nearest_idx is not None else 'None'}",
-                "",
-                "Height Method: 3D Nose->Map Transform (Improved Accuracy)",
-                "Cyan = SLAM Point    Yellow = Nearest Person    Purple = Others",
-                "Blue = Detection Center (nose-aligned)    Red = Nose    Green = Other Keypoints"
-            ]
-            draw_text_block(expanded_vis, info, (15, 15), 
-                          font_scale=0.5,
-                          text_color=(240, 240, 240),
-                          bg_color=(32, 32, 32, 0),  # Transparent background
-                          padding=0,
-                          line_spacing=18)
+            # Draw the modern header
+            draw_modern_header(expanded_vis, self.slam_point, len(detection_objects), nearest_det, header_height)
             
             vis = expanded_vis
 
@@ -449,7 +637,8 @@ class HumanPublisher:
                 "x": nearest['x'],
                 "y": nearest['y'],
                 "z": 0.0,
-                "confidence": nearest['confidence']
+                "confidence": nearest['confidence'],
+                "positioning_method": nearest['positioning_method']
             }
             if nearest['height'] is not None:
                 pd["height"] = nearest['height']
@@ -464,11 +653,15 @@ class HumanPublisher:
             "frame_id": "map",
             "people": people,
             "slam_point": {"x": self.slam_point[0], "y": self.slam_point[1]},
-            "total_in_boundary": len(self.all_detections),
-            "height_method": "3d_nose_map_transform"  # Added to indicate new method
+            "total_in_boundary": len(self.all_detections)
         }
         try:
             self.mqtt.publish_human_results(json.dumps(msg))
+            if nearest:
+                method_info = f" ({nearest['positioning_method']})"
+                print(f"[mqtt] Published nearest person: {nearest['x']:.2f}, {nearest['y']:.2f}, height: {nearest.get('height', 'N/A')}{method_info}")
+            else:
+                print(f"[mqtt] No people detected in boundary")
         except Exception as e:
             print("[mqtt error]", e)
 
@@ -481,8 +674,8 @@ def main():
     slam_point = parse_slam_point(sys.argv)
     pub = HumanPublisher(slam_point)
     try:
-        print("Human detector started with improved 3D height calculation—press ESC to exit.")
-        print("Using new 3D transformation matrix for more accurate height measurements.")
+        print("Human detector started—press ESC to exit.")
+        print("Position priority: Both Ankles > Single Ankle > Nose-Aligned Bottom > Box Center")
         while pub.running:
             time.sleep(0.1)
     except KeyboardInterrupt:
