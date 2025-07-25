@@ -104,23 +104,37 @@ def draw_dropdown(img, x, y, width, height, options, selected_idx, active):
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
 def draw_buttons(img, tracking_active):
-    """Draw control buttons on the image"""
-    # Position buttons in the GUI area below dropdown
     gui_start_y = FRAME_H
-    button_y = gui_start_y + 90
-    button_height = 30
-    button_width = 120
-    
-    # Clear/Stop button (moved to left position)
-    clear_x = 10
-    clear_text = "Stop Track" if tracking_active else "Clear"
-    clear_color = (0, 0, 150) if tracking_active else (150, 0, 0)
-    cv2.rectangle(img, (clear_x, button_y), (clear_x + button_width, button_y + button_height),
-                 clear_color, -1)
-    cv2.rectangle(img, (clear_x, button_y), (clear_x + button_width, button_y + button_height),
-                 (200, 200, 200), 2)
-    cv2.putText(img, clear_text, (clear_x + 10, button_y + 20),
-               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    button_y   = gui_start_y + 90
+    button_h   = 30
+    button_w   = 120
+
+    #── Auto Select button ────────────────────────
+    auto_x = 10
+    auto_color = (0,150,0) if not tracking_active else (100,100,100)
+    cv2.rectangle(img, (auto_x, button_y),
+                  (auto_x+button_w, button_y+button_h),
+                  auto_color, -1)
+    cv2.rectangle(img, (auto_x, button_y),
+                  (auto_x+button_w, button_y+button_h),
+                  (200,200,200), 2)
+    cv2.putText(img, "Auto Select",
+                (auto_x+10, button_y+20),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
+
+    #── Clear/Stop button ──────────────────────────
+    clear_x = auto_x + button_w + 10
+    clear_text  = "Stop Track" if tracking_active else "Clear"
+    clear_color = (0,0,150) if tracking_active else (150,0,0)
+    cv2.rectangle(img, (clear_x, button_y),
+                  (clear_x+button_w, button_y+button_h),
+                  clear_color, -1)
+    cv2.rectangle(img, (clear_x, button_y),
+                  (clear_x+button_w, button_y+button_h),
+                  (200,200,200), 2)
+    cv2.putText(img, clear_text,
+                (clear_x+10, button_y+20),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
 
 def draw_gui_area(img):
     """Draw the GUI background area below the video"""
@@ -133,48 +147,73 @@ def draw_gui_area(img):
 def handle_mouse_click(event, x, y, flags, param):
     """Handle mouse clicks on the OpenCV window"""
     global dropdown_active, dropdown_selected_idx, selected_id, target_id, selection_mode
+
+    if event != cv2.EVENT_LBUTTONDOWN:
+        return
+
+    gui_start_y = FRAME_H
+
+    # ─── Dropdown toggle ───────────────────────────────────────────────────────
+    dropdown_x, dropdown_y = 10, gui_start_y + 45
+    dropdown_w, dropdown_h = 200, 30
+
+    # Click on the closed dropdown box
+    if (dropdown_x <= x <= dropdown_x + dropdown_w and
+        dropdown_y <= y <= dropdown_y + dropdown_h):
+        if selection_mode and dropdown_options:
+            dropdown_active = not dropdown_active
+        return
+
+    # ─── Dropdown options ──────────────────────────────────────────────────────
+    if dropdown_active and dropdown_options:
+        option_h = 30
+        total_h  = len(dropdown_options) * option_h
+        options_y = dropdown_y - total_h
+
+        for i, option in enumerate(dropdown_options):
+            y0 = options_y + i * option_h
+            if (dropdown_x <= x <= dropdown_x + dropdown_w and
+                y0 <= y <= y0 + option_h):
+                dropdown_selected_idx = i
+                selected_id = int(option)
+                target_id   = selected_id
+                selection_mode = False
+                dropdown_active = False
+                print(f"[gui] Selected ID {selected_id} for tracking")
+                return
+
+    # ─── Buttons ───────────────────────────────────────────────────────────────
+    button_y      = gui_start_y + 90
+    button_h      = 30
+    button_w      = 120
+    auto_x        = 10
+    clear_x       = auto_x + button_w + 10
+
+    # Auto Select (only in selection mode)
+    if (auto_x <= x <= auto_x + button_w and
+        button_y <= y <= button_y + button_h and
+        selection_mode):
+        auto_select_id()
+        return
+
+    # Clear / Stop Track
+    if (clear_x <= x <= clear_x + button_w and
+        button_y <= y <= button_y + button_h):
+        clear_selection()
+        return
     
-    if event == cv2.EVENT_LBUTTONDOWN:
-        gui_start_y = FRAME_H
-        
-        # Check dropdown area (positioned in GUI area)
-        dropdown_x = 10
-        dropdown_y = gui_start_y + 45
-        dropdown_width, dropdown_height = 200, 30
-        
-        if (dropdown_x <= x <= dropdown_x + dropdown_width and
-            dropdown_y <= y <= dropdown_y + dropdown_height):
-            if selection_mode and dropdown_options:
-                dropdown_active = not dropdown_active
-        
-        # Check dropdown options if active (expand upward in GUI area)
-        elif dropdown_active and dropdown_options:
-            option_height = 30
-            dropdown_height_total = len(dropdown_options) * option_height
-            options_start_y = dropdown_y - dropdown_height_total
-            
-            for i, option in enumerate(dropdown_options):
-                option_y = options_start_y + i * option_height
-                if (dropdown_x <= x <= dropdown_x + dropdown_width and
-                    option_y <= y <= option_y + option_height):
-                    dropdown_selected_idx = i
-                    selected_id = int(dropdown_options[i])
-                    target_id = selected_id
-                    selection_mode = False
-                    dropdown_active = False
-                    print(f"[gui] Selected ID {selected_id} for tracking")
-                    break
-        
-        # Check buttons (positioned in GUI area with updated coordinates)
-        button_y = gui_start_y + 90
-        button_height = 30
-        button_width = 120
-        
-        # Clear/Stop button
-        clear_x = 10
-        if (clear_x <= x <= clear_x + button_width and
-            button_y <= y <= button_y + button_height):
-            clear_selection()
+def auto_select_id():
+    """Auto-select the most consistently detected ID"""
+    global id_history, selected_id, target_id, selection_mode, dropdown_selected_idx
+    if id_history:
+        best_id = max(id_history.keys(), key=lambda k: id_history[k])
+        selected_id = best_id
+        target_id = best_id
+        selection_mode = False
+        # Update dropdown selection
+        if str(best_id) in dropdown_options:
+            dropdown_selected_idx = dropdown_options.index(str(best_id))
+        print(f"[gui] Auto-selected ID {best_id} for tracking")
 
 def clear_selection():
     """Clear the current selection and return to selection mode"""
