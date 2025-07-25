@@ -24,26 +24,24 @@ IOU_THRESH                 = 0.8
 
 # 4-point pixel boundary polygon
 BOUNDARY_POINTS_MAP = np.array([
-    [208, 677],
-    [432, 256],
-    [733, 260],
-    [792, 699],
+    [175, 699],
+    [407, 261],
+    [705, 258],
+    [775, 694],
 ], dtype=np.int32)
 
 # === NEW TWO-MATRIX CALIBRATION SYSTEM ===
 # 1. Position transformation matrix (Camera→map transform for SLAM point projection)
 T_MAP_CAM = np.array([
-  [-0.30520434,  0.55566699, -0.77335924,  2.06314877],
-  [ 0.95208065,  0.16114999, -0.25994830,  1.09149810],
-  [-0.01981786, -0.81563771, -0.57822346,  1.50934166],
+  [-0.10083076,  0.57155089, -0.81434804,  1.97670059],
+  [ 0.99490299,  0.05702716, -0.08316211,  0.65838077],
+  [-0.00109143, -0.81858260, -0.57438779,  1.48790371],
   [ 0.00000000,  0.00000000,  0.00000000,  1.00000000],
 ], dtype=float)
 
-
-
 # 2. Height calibration parameters
 # TODO: Replace these with your actual calibration results
-HEIGHT_PARAMS = [627.50804828, 85.43821047]
+HEIGHT_PARAMS = [552.58464239, 109.35373113]
 ROBOT_REAL_HEIGHT = 1.360  # meters
 
 DEFAULT_SLAM_POINT         = (-0.9, 0.0)
