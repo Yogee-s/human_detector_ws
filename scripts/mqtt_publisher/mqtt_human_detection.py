@@ -18,11 +18,12 @@ torch.backends.cudnn.benchmark = True
 # === CONFIGURATION ===
 POSE_MODEL_PATH            = '/home/commu/Desktop/human_detector_ws/models/yolo11m-pose.pt'
 # FRAME_W, FRAME_H           = 640, 480
-FRAME_W, FRAME_H = 1280, 720
+FRAME_W, FRAME_H           = 1280, 720
 CONF_THRESH                = 0.4
 IOU_THRESH                 = 0.8
 
-# 4-point pixel boundary polygon
+# 4-point pixel boundary coordinates (boundary_coordinates.py)
+# TODO: Replace these with your actual calibration results
 BOUNDARY_POINTS_MAP = np.array([
     [175, 699],
     [407, 261],
@@ -30,8 +31,8 @@ BOUNDARY_POINTS_MAP = np.array([
     [775, 694],
 ], dtype=np.int32)
 
-# === NEW TWO-MATRIX CALIBRATION SYSTEM ===
-# 1. Position transformation matrix (Camera→map transform for SLAM point projection)
+# Transformation matrix calibration parameter (mqtt_calibration.py)
+# TODO: Replace these with your actual calibration results
 T_MAP_CAM = np.array([
   [-0.10083076,  0.57155089, -0.81434804,  1.97670059],
   [ 0.99490299,  0.05702716, -0.08316211,  0.65838077],
@@ -39,13 +40,16 @@ T_MAP_CAM = np.array([
   [ 0.00000000,  0.00000000,  0.00000000,  1.00000000],
 ], dtype=float)
 
-# 2. Height calibration parameters
+# Height calibration parameters (mqtt_calibration.py)
 # TODO: Replace these with your actual calibration results
 HEIGHT_PARAMS = [552.58464239, 109.35373113]
 ROBOT_REAL_HEIGHT = 1.360  # meters
 
-DEFAULT_SLAM_POINT         = (-0.9, 0.0)
-SLAM_POINT_VERTICAL_OFFSET = 0.2  # meters
+# TODO: Replace these with actual slam reference point coordinates
+DEFAULT_SLAM_POINT = (-0.9, 0.0)
+
+# Vertical offset for reference point, just a visual marker as slam point does not accurately show on camera
+SLAM_POINT_VERTICAL_OFFSET = 0.2  # meters 
 
 def point_in_polygon(point, polygon):
     x, y = point
